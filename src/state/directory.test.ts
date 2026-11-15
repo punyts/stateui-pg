@@ -107,7 +107,7 @@ describe('two owner nodes on one database', () => {
             if (index === 8) writes.push(b.claim(address).then(() => undefined));
         }
         const outcomes = (await Promise.all(writes)).filter((outcome) => outcome !== undefined);
-        await b.authorityOf(address)?.flush();
+        await (await b.authorityOf(address))?.flush();
         const stored = await storage.load(address);
 
         // Assert

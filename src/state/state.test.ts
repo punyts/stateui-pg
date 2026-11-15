@@ -1,6 +1,7 @@
 import { copyFile, mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FencedError } from '@punyts/state-sync/authority';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from '../db/migrate.js';
 import { STATEUI_PG_MIGRATIONS } from '../migrations.js';
@@ -106,6 +107,26 @@ describe('PgUiInstanceRepository on state_node', () => {
         expect(JSON.stringify((await repository.getData(app, 'notes')).value)).toBe(JSON.stringify({ model: 'note', records: { b: { text: 'two' }, a: { text: 'one' } } }));
         const addresses = (await test.db.query<{ address: string }>('SELECT DISTINCT address FROM state_node WHERE address LIKE $1', [`%/${app}/user`])).rows.map((row) => row.address);
         expect(addresses).toEqual([`u1/${app}/user`]);
+    });
+
+    it('should refuse a save under an older epoch than the instance was last saved under, and take a newer one', async () => {
+        // Arrange
+        const repository = new PgUiInstanceRepository(workspaceDb(test.db, WORKSPACE), 'u2');
+        const app = '10000000-0000-4000-8000-000000000008';
+        const empty = { app: {}, screens: {}, data: {} } as never;
+        await repository.write(app, empty, { app: {}, screens: { home: { x: 1 } }, data: {} } as never, { epoch: 2 });
+
+        // Act
+        const older = repository.write(app, empty, { app: {}, screens: { home: { x: 99 } }, data: {} } as never, { epoch: 1 });
+        const olderData = repository.writeData(app, 'notes', { model: 'note', records: { a: { text: 'late' } } } as never, { epoch: 1 });
+        await expect(older).rejects.toBeInstanceOf(FencedError);
+        await expect(olderData).rejects.toBeInstanceOf(FencedError);
+        await repository.write(app, empty, { app: {}, screens: { home: { x: 3 } }, data: {} } as never, { epoch: 3 });
+
+        // Assert
+        expect((await repository.get(app)).value).toEqual({ screens: { home: { x: 3 } } });
+        const head = (await test.db.query<{ epoch: string }>('SELECT epoch FROM namespace_head WHERE address = $1', [`u2/${app}/user`])).rows[0];
+        expect(Number(head?.epoch)).toBe(3);
     });
 });
 

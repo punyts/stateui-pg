@@ -1,5 +1,5 @@
 import { diffInstance, isAppId, userStateAddress } from '@punyts/stateui-mcp';
-import type { InstanceDiff, InstanceRead, PersonaDataset, UiInstanceRepository } from '@punyts/stateui-mcp';
+import type { InstanceDiff, InstanceRead, InstanceWriteFence, PersonaDataset, UiInstanceRepository } from '@punyts/stateui-mcp';
 import type { Queryable } from '../db/Database.js';
 import { PgStateStore } from '../state/PgStateStore.js';
 import type { JsonObject as StateObject } from '../state/PgStateStore.js';
@@ -51,12 +51,12 @@ export class PgUiInstanceRepository implements UiInstanceRepository {
         return { value: (local === undefined ? diff : { ...diff, data: local }) as InstanceDiff };
     }
 
-    async write(appId: string, definition: JsonObject, current: JsonObject): Promise<InstanceDiff> {
+    async write(appId: string, definition: JsonObject, current: JsonObject, fence?: InstanceWriteFence): Promise<InstanceDiff> {
         const diff = diffInstance(definition as DiffInput, current as DiffInput) as InstanceDiff;
         if (!isAppId(appId)) return diff;
         const { data: local, ...rest } = diff as unknown as StateObject;
         const rows = local === undefined ? rest : { ...rest, [LOCAL_DATA]: local };
-        await this.db.transaction((tx) => store.write(tx, this.place(appId), '', rows, { keep: ['data'] }));
+        await this.db.transaction((tx) => store.write(tx, this.place(appId), '', rows, { keep: ['data'], ...(fence?.epoch === undefined ? {} : { epoch: fence.epoch }) }));
         return diff;
     }
 
@@ -69,12 +69,12 @@ export class PgUiInstanceRepository implements UiInstanceRepository {
         return { value: { model: model['model'], records: read.value as PersonaDataset['records'] } };
     }
 
-    async writeData(appId: string, binding: string, dataset: PersonaDataset): Promise<void> {
+    async writeData(appId: string, binding: string, dataset: PersonaDataset, fence?: InstanceWriteFence): Promise<void> {
         if (!isAppId(appId)) throw new Error('An app id is a UUID');
         const place = this.place(appId);
         await this.db.transaction(async (tx) => {
             const before = this.onData === undefined ? undefined : (await store.read(tx, place.address, `data.${binding}`)).value;
-            await store.write(tx, place, `data.${binding}`, dataset.records as unknown as StateObject, { meta: { model: dataset.model } });
+            await store.write(tx, place, `data.${binding}`, dataset.records as unknown as StateObject, { meta: { model: dataset.model }, ...(fence?.epoch === undefined ? {} : { epoch: fence.epoch }) });
             await this.onData?.(tx, { workspaceId: this.db.workspaceId, persona: this.persona, appId: appId.toLowerCase(), binding, model: dataset.model, before, after: dataset.records });
         });
     }

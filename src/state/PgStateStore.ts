@@ -1,3 +1,4 @@
+import { FencedError } from '@punyts/state-sync/authority';
 import type { Queryable } from '../db/Database.js';
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -35,7 +36,10 @@ export interface StateWriteOptions {
     readonly revision?: number;
     /** Whether to log the rows the write changed in `state_change`; true by default (an authority logs its own changes) */
     readonly log?: boolean;
-    /** The owner epoch the rows were written under */
+    /**
+     * The owner epoch the rows were written under. A write under an epoch older than the newest the namespace was
+     * written under is refused with `FencedError` (its writer lost the namespace); a newer one becomes the newest
+     */
     readonly epoch?: number;
 }
 
@@ -92,7 +96,9 @@ export class PgStateStore {
      * when `value` is undefined; answers the namespace's revision, which moves only when a row changed
      */
     async write(tx: Queryable, place: StatePlace, at: string, value: JsonObject | undefined, options: StateWriteOptions = {}): Promise<number> {
-        const head = await this.lockHead(tx, place);
+        const { revision: head, epoch: headEpoch } = await this.lockHead(tx, place);
+        if (options.epoch !== undefined && options.epoch < headEpoch) throw new FencedError(place.address, options.epoch, headEpoch);
+        if (options.epoch !== undefined && options.epoch > headEpoch) await tx.query('UPDATE namespace_head SET epoch = $2 WHERE address = $1', [place.address, options.epoch]);
         const keep = new Set(options.keep ?? []);
         const kept = (path: string): boolean => at === '' && keep.has(path.split('.')[0] as string);
         const existing = (
@@ -176,10 +182,10 @@ export class PgStateStore {
         return (last ?? 0) + 1;
     }
 
-    private async lockHead(tx: Queryable, place: StatePlace): Promise<number> {
+    private async lockHead(tx: Queryable, place: StatePlace): Promise<{ revision: number; epoch: number }> {
         await tx.query('INSERT INTO namespace_head (address, workspace_id) VALUES ($1, $2) ON CONFLICT (address) DO NOTHING', [place.address, place.workspaceId]);
-        const row = (await tx.query<{ revision: string | number }>('SELECT revision FROM namespace_head WHERE address = $1 FOR UPDATE', [place.address])).rows[0];
-        return Number(row?.revision ?? 0);
+        const row = (await tx.query<{ revision: string | number; epoch: string | number }>('SELECT revision, epoch FROM namespace_head WHERE address = $1 FOR UPDATE', [place.address])).rows[0];
+        return { revision: Number(row?.revision ?? 0), epoch: Number(row?.epoch ?? 0) };
     }
 
     private async log(tx: Queryable, place: StatePlace, revision: number, seq: number, id: string | undefined, path: string, op: 'set' | 'delete', value: Json): Promise<void> {
