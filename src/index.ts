@@ -3,3 +3,12 @@ export type { Database, DatabaseOptions, Queryable, TransactionOptions } from '.
 export { assertMigrated, migrate, pendingMigrations, readMigrations } from './db/migrate.js';
 export type { Migration, MigrationSet } from './db/migrate.js';
 export { STATEUI_PG_MIGRATIONS } from './migrations.js';
+export { pgWorkspaceStorage } from './workspace/PgWorkspaceStorage.js';
+export type { PgWorkspaceStorageOptions } from './workspace/PgWorkspaceStorage.js';
+export { PgPartRepository } from './workspace/PgPartRepository.js';
+export { PgUiInstanceRepository } from './workspace/PgUiInstanceRepository.js';
+export { PgUiFileRepository } from './workspace/PgUiFileRepository.js';
+export { PgUiFileStore } from './workspace/PgUiFileStore.js';
+export { PgUiErrorLog } from './workspace/PgUiErrorLog.js';
+export { workspaceDb } from './workspace/WorkspaceDb.js';
+export type { WorkspaceDb } from './workspace/WorkspaceDb.js';
