@@ -6,6 +6,8 @@ export { STATEUI_PG_MIGRATIONS } from './migrations.js';
 export { pgWorkspaceStorage } from './workspace/PgWorkspaceStorage.js';
 export type { PgWorkspaceStorageOptions } from './workspace/PgWorkspaceStorage.js';
 export { PgPartRepository } from './workspace/PgPartRepository.js';
+export { listenToPartChanges, PART_CHANNEL } from './workspace/PgPartChanges.js';
+export type { PartChanges, PartChangesOptions, PartNotice } from './workspace/PgPartChanges.js';
 export { PgUiInstanceRepository } from './workspace/PgUiInstanceRepository.js';
 export { PgUiFileRepository } from './workspace/PgUiFileRepository.js';
 export { PgUiFileStore } from './workspace/PgUiFileStore.js';

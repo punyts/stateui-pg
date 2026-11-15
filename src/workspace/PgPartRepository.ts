@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createUiPart, isAppId, isPartBody, isPartKind, isRevisionCurrent, PART_BODY_PROBLEM, PART_ID_PROBLEM, PART_ID_TAKEN, partInputProblem, partNameProblem, renameUiPart, reviseUiPart } from '@punyts/stateui-mcp';
+import { PART_CHANNEL, partNotice } from './PgPartChanges.js';
 import type {
     CreateUiPartInput,
     CreateUiPartResult,
@@ -51,6 +52,11 @@ export interface PgPartRepositoryOptions {
      * queue its embedding, with its body before (none when made) and after (none when deleted)
      */
     readonly onChange?: (tx: Queryable, change: PartChange) => Promise<void>;
+    /**
+     * Announces every change of a part to the other servers on the database (`PART_CHANNEL`), naming this server as
+     * `source` so it can skip its own notices (`listenToPartChanges`). Nothing is announced without it
+     */
+    readonly announceAs?: string;
 }
 
 /**
@@ -62,6 +68,7 @@ export class PgPartRepository implements UiPartRepository {
     private readonly now: () => Date;
     private readonly newId: () => string;
     private readonly onChange: NonNullable<PgPartRepositoryOptions['onChange']>;
+    private readonly source: string | undefined;
 
     constructor(
         private readonly db: WorkspaceDb,
@@ -70,6 +77,13 @@ export class PgPartRepository implements UiPartRepository {
         this.now = options.now ?? (() => new Date());
         this.newId = options.newId ?? randomUUID;
         this.onChange = options.onChange ?? (async () => undefined);
+        this.source = options.announceAs;
+    }
+
+    /** Tells the other servers, once the transaction commits, that a part changed */
+    private async announce(tx: Queryable, kind: PartKind, name: string): Promise<void> {
+        if (this.source === undefined) return;
+        await tx.query('SELECT pg_notify($1, $2)', [PART_CHANNEL, partNotice(this.source, this.db.workspaceId, kind, name)]);
     }
 
     async create<K extends PartKind>(input: CreateUiPartInput<K>): Promise<CreateUiPartResult<K>> {
@@ -92,6 +106,7 @@ export class PgPartRepository implements UiPartRepository {
                     part.updatedAt
                 ]);
                 await this.onChange(tx, { workspaceId: this.db.workspaceId, kind: part.kind, id: part.id, after: part.body });
+                await this.announce(tx, part.kind, part.name);
                 return { kind: 'created', part: { ...part, body: structuredClone(part.body) } };
             });
         } catch (error) {
@@ -147,6 +162,7 @@ export class PgPartRepository implements UiPartRepository {
             if (!isRevisionCurrent(row.revision, expectedRevision)) return { kind: 'conflict', currentRevision: row.revision };
             await tx.query('DELETE FROM part WHERE workspace_id = $1 AND kind = $2 AND id = $3', [this.db.workspaceId, kind, row.id]);
             await this.onChange(tx, { workspaceId: this.db.workspaceId, kind, id: row.id, before: row.body });
+            await this.announce(tx, kind, name);
             return { kind: 'deleted' };
         });
     }
@@ -191,6 +207,7 @@ export class PgPartRepository implements UiPartRepository {
                 }
                 const renamed = renameUiPart({ ...part, body: renamedBody }, to, now);
                 for (const written of [renamed, ...revised]) await this.save(tx, written, before.get(written.id));
+                await this.announce(tx, kind, from);
                 const rewritten: UiPartRewritten[] = revised.map(({ kind: of, name, revision }) => ({ kind: of, name, revision }));
                 return { kind: 'renamed', revision: renamed.revision, rewritten };
             });
@@ -216,6 +233,7 @@ export class PgPartRepository implements UiPartRepository {
                 part.createdAt,
                 part.updatedAt
             ]);
+            await this.announce(tx, part.kind, part.name);
         });
     }
 
@@ -234,5 +252,6 @@ export class PgPartRepository implements UiPartRepository {
             part.updatedAt
         ]);
         await this.onChange(tx, { workspaceId: this.db.workspaceId, kind: part.kind, id: part.id, ...(before !== undefined && { before }), after: part.body });
+        await this.announce(tx, part.kind, part.name);
     }
 }

@@ -20,6 +20,8 @@ export interface PgWorkspaceStorageOptions {
     readonly embedParts?: boolean;
     /** Queues the embedding of every record field a model marks `embed: true` when it changes, in datasets and persona bindings */
     readonly embedRecords?: boolean;
+    /** Announces every change of a part to the other servers on the database, as this server (`listenToPartChanges`) */
+    readonly announceAs?: string;
 }
 
 /** What an app keeps beside its part: its files, their bytes and its preview errors; removed with the app */
@@ -50,6 +52,7 @@ export function pgWorkspaceStorage(db: Database, workspaceId: string, options: P
     const parts = new PgPartRepository(workspace, {
         now,
         newId: options.newId ?? randomUUID,
+        ...(options.announceAs !== undefined && { announceAs: options.announceAs }),
         ...((options.embedParts === true || options.embedRecords === true) && {
             onChange: async (tx, change) => {
                 if (options.embedParts === true) await enqueueEmbedding(tx, { workspaceId: change.workspaceId, sourceKind: PART_SOURCE, sourceId: `${change.kind}/${change.id}` });
