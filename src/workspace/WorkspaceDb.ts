@@ -20,3 +20,11 @@ export async function lockKey(tx: Queryable, key: string): Promise<void> {
 export async function appExists(tx: Queryable, workspaceId: string, appId: string): Promise<boolean> {
     return (await tx.query<{ found: boolean }>("SELECT EXISTS (SELECT 1 FROM part WHERE workspace_id = $1 AND kind = 'apps' AND id = $2) AS found", [workspaceId, appId.toLowerCase()])).rows[0]?.found === true;
 }
+
+/**
+ * A workspace's view of a transaction that is already open, for work that spans workspaces in one transaction (moving an
+ * app between them): the caller set every workspace it touches in `app.workspace_ids`
+ */
+export function txWorkspaceDb(tx: Queryable, workspaceId: string): WorkspaceDb {
+    return { workspaceId: workspaceId.toLowerCase(), transaction: (work) => work(tx) };
+}

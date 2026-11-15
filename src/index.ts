@@ -10,5 +10,5 @@ export { PgUiInstanceRepository } from './workspace/PgUiInstanceRepository.js';
 export { PgUiFileRepository } from './workspace/PgUiFileRepository.js';
 export { PgUiFileStore } from './workspace/PgUiFileStore.js';
 export { PgUiErrorLog } from './workspace/PgUiErrorLog.js';
-export { workspaceDb } from './workspace/WorkspaceDb.js';
+export { txWorkspaceDb, workspaceDb } from './workspace/WorkspaceDb.js';
 export type { WorkspaceDb } from './workspace/WorkspaceDb.js';
