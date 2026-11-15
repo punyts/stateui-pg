@@ -74,10 +74,16 @@ export class EmbeddingIndex {
         if (!Number.isInteger(embedder.dimensions) || embedder.dimensions < 1 || embedder.dimensions > 2000) throw new Error('An embedding has 1 to 2000 dimensions');
     }
 
-    /** Makes the model's HNSW index when it has none: over the vectors cast to its size, for its rows only */
+    /**
+     * Makes the model's HNSW index when it has none: over the vectors cast to its size, for its rows only. Only the
+     * table's owner may make it, so `magnetic migrate` makes it for the configured model; a server connected as a role
+     * that owns nothing finds it there and makes nothing
+     */
     ensureIndex(): Promise<void> {
         this.indexed ??= (async () => {
             const name = `embedding_hnsw_${createHash('sha256').update(this.embedder.model).digest('hex').slice(0, 16)}`;
+            const { rows } = await this.db.query('SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = $1', [name]);
+            if (rows.length > 0) return;
             await this.db.query(
                 `CREATE INDEX IF NOT EXISTS ${name} ON embedding USING hnsw ((embedding::vector(${this.embedder.dimensions})) vector_cosine_ops) WHERE model = '${this.embedder.model}'`
             );

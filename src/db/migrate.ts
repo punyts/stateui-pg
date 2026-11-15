@@ -90,3 +90,27 @@ export async function assertMigrated(db: Database, sets: readonly MigrationSet[]
         throw new Error(`The database is behind: ${pending.length} migration(s) to apply (${pending.map((migration) => `${migration.owner} ${migration.version}`).join(', ')}). Run \`magnetic migrate\` first`);
     }
 }
+
+/**
+ * Lets `role` use the tables the migrations made in the current schema: read and write rows, use the sequences and
+ * call the functions, and nothing more. A server connects as such a role, not as the owner, so it cannot change the
+ * schema; and a role without superuser or `BYPASSRLS` is held by row-level security. The role must exist (it has a
+ * password, which stays out of the migrations). Safe to run again; run it after every `migrate`, for new tables
+ */
+export async function grantAppRole(db: Database, role: string): Promise<void> {
+    if (!/^[a-z_][a-z0-9_]{0,62}$/.test(role)) throw new Error(`A role name is lower-case letters, digits and _: ${role}`);
+    const { rows } = await db.query<{ schema: string; exists: boolean; bypasses: boolean }>(
+        'SELECT current_schema() AS schema, EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1) AS exists, EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1 AND (rolsuper OR rolbypassrls)) AS bypasses',
+        [role]
+    );
+    const { schema, exists, bypasses } = rows[0] as { schema: string; exists: boolean; bypasses: boolean };
+    if (!exists) throw new Error(`No role ${role}: create it first, with a password and without superuser or BYPASSRLS`);
+    if (bypasses) throw new Error(`The role ${role} is a superuser or has BYPASSRLS, so row-level security would not hold it`);
+    const quoted = `"${schema.replace(/"/g, '""')}"`;
+    await db.transaction(async (tx) => {
+        await tx.query(`GRANT USAGE ON SCHEMA ${quoted} TO ${role}`);
+        await tx.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${quoted} TO ${role}`);
+        await tx.query(`GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA ${quoted} TO ${role}`);
+        await tx.query(`GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA ${quoted} TO ${role}`);
+    });
+}
