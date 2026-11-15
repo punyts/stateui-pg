@@ -4,6 +4,7 @@ import type { AppFolderStore, ServicesStorage } from '@punyts/stateui-mcp';
 import type { Database } from '../db/Database.js';
 import { enqueueEmbedding } from '../embeddings/EmbeddingIndex.js';
 import { PART_SOURCE } from '../embeddings/partText.js';
+import { queuePersonaRecordChanges, queueRecordChanges } from '../embeddings/records.js';
 import { PgPartRepository } from './PgPartRepository.js';
 import { PgUiErrorLog } from './PgUiErrorLog.js';
 import { PgUiFileRepository } from './PgUiFileRepository.js';
@@ -17,6 +18,8 @@ export interface PgWorkspaceStorageOptions {
     readonly newId?: () => string;
     /** Queues the embedding of every part that changes, in the transaction of the change */
     readonly embedParts?: boolean;
+    /** Queues the embedding of every record field a model marks `embed: true` when it changes, in datasets and persona bindings */
+    readonly embedRecords?: boolean;
 }
 
 /** What an app keeps beside its part: its files, their bytes and its preview errors; removed with the app */
@@ -47,12 +50,17 @@ export function pgWorkspaceStorage(db: Database, workspaceId: string, options: P
     const parts = new PgPartRepository(workspace, {
         now,
         newId: options.newId ?? randomUUID,
-        ...(options.embedParts === true && { onChange: (tx, change) => enqueueEmbedding(tx, { workspaceId: change.workspaceId, sourceKind: PART_SOURCE, sourceId: `${change.kind}/${change.id}` }) })
+        ...((options.embedParts === true || options.embedRecords === true) && {
+            onChange: async (tx, change) => {
+                if (options.embedParts === true) await enqueueEmbedding(tx, { workspaceId: change.workspaceId, sourceKind: PART_SOURCE, sourceId: `${change.kind}/${change.id}` });
+                if (options.embedRecords === true) await queueRecordChanges(tx, change);
+            }
+        })
     });
     return {
         parts,
         importPart: (part) => parts.put(part),
-        instances: (persona) => new PgUiInstanceRepository(workspace, persona),
+        instances: (persona) => new PgUiInstanceRepository(workspace, persona, options.embedRecords === true ? queuePersonaRecordChanges : undefined),
         files: new PgUiFileRepository(workspace, now),
         fileStore: new PgUiFileStore(workspace),
         errorLog: new PgUiErrorLog(workspace),

@@ -34,11 +34,23 @@ function toPart<K extends PartKind>(row: PartRow): UiPart<K> {
     return { id: row.id, kind: row.kind as K, name: row.name, revision: row.revision, body: row.body as UiPartBodies[K], createdAt: row.created_at, updatedAt: row.updated_at };
 }
 
+/** One change of a part, for `onChange` */
+export interface PartChange {
+    readonly workspaceId: string;
+    readonly kind: PartKind;
+    readonly id: string;
+    readonly before?: object;
+    readonly after?: object;
+}
+
 export interface PgPartRepositoryOptions {
     readonly now?: () => Date;
     readonly newId?: () => string;
-    /** Called in the transaction of every change of a part (made, written, renamed, rewritten or deleted), such as to queue its embedding */
-    readonly onChange?: (tx: Queryable, change: { readonly workspaceId: string; readonly kind: PartKind; readonly id: string }) => Promise<void>;
+    /**
+     * Called in the transaction of every change of a part (made, written, renamed, rewritten or deleted), such as to
+     * queue its embedding, with its body before (none when made) and after (none when deleted)
+     */
+    readonly onChange?: (tx: Queryable, change: PartChange) => Promise<void>;
 }
 
 /**
@@ -79,7 +91,7 @@ export class PgPartRepository implements UiPartRepository {
                     part.createdAt,
                     part.updatedAt
                 ]);
-                await this.onChange(tx, { workspaceId: this.db.workspaceId, kind: part.kind, id: part.id });
+                await this.onChange(tx, { workspaceId: this.db.workspaceId, kind: part.kind, id: part.id, after: part.body });
                 return { kind: 'created', part: { ...part, body: structuredClone(part.body) } };
             });
         } catch (error) {
@@ -122,7 +134,7 @@ export class PgPartRepository implements UiPartRepository {
             if (row === undefined) return { kind: 'not-found' };
             if (!isRevisionCurrent(row.revision, expectedRevision)) return { kind: 'conflict', currentRevision: row.revision };
             const written = reviseUiPart(toPart<K>(row), body, this.now());
-            await this.save(tx, written);
+            await this.save(tx, written, row.body);
             return { kind: 'written', revision: written.revision };
         });
     }
@@ -134,7 +146,7 @@ export class PgPartRepository implements UiPartRepository {
             if (row === undefined) return { kind: 'not-found' };
             if (!isRevisionCurrent(row.revision, expectedRevision)) return { kind: 'conflict', currentRevision: row.revision };
             await tx.query('DELETE FROM part WHERE workspace_id = $1 AND kind = $2 AND id = $3', [this.db.workspaceId, kind, row.id]);
-            await this.onChange(tx, { workspaceId: this.db.workspaceId, kind, id: row.id });
+            await this.onChange(tx, { workspaceId: this.db.workspaceId, kind, id: row.id, before: row.body });
             return { kind: 'deleted' };
         });
     }
@@ -163,6 +175,7 @@ export class PgPartRepository implements UiPartRepository {
                 const now = this.now();
                 let renamedBody = part.body;
                 const revised: UiPart[] = [];
+                const before = new Map<string, object>([[part.id, partRow.body]]);
                 for (const rewrite of rewrites) {
                     const self = rewrite.kind === kind && rewrite.name === from;
                     const currentRow = locked.get(`${rewrite.kind}/${rewrite.name}`);
@@ -171,10 +184,13 @@ export class PgPartRepository implements UiPartRepository {
                         return { kind: 'conflict', part: { kind: rewrite.kind, name: rewrite.name }, currentRevision: current?.revision ?? 0 };
                     }
                     if (self) renamedBody = rewrite.body as UiPartBodies[PartKind];
-                    else revised.push(reviseUiPart(current, rewrite.body as UiPartBodies[PartKind], now));
+                    else {
+                        revised.push(reviseUiPart(current, rewrite.body as UiPartBodies[PartKind], now));
+                        before.set(current.id, (currentRow as PartRow).body);
+                    }
                 }
                 const renamed = renameUiPart({ ...part, body: renamedBody }, to, now);
-                for (const written of [renamed, ...revised]) await this.save(tx, written);
+                for (const written of [renamed, ...revised]) await this.save(tx, written, before.get(written.id));
                 const rewritten: UiPartRewritten[] = revised.map(({ kind: of, name, revision }) => ({ kind: of, name, revision }));
                 return { kind: 'renamed', revision: renamed.revision, rewritten };
             });
@@ -207,7 +223,7 @@ export class PgPartRepository implements UiPartRepository {
         return (await tx.query<PartRow>(`SELECT ${COLUMNS} FROM part WHERE workspace_id = $1 AND ${where}${forUpdate ? ' FOR UPDATE' : ''}`, [this.db.workspaceId, ...params])).rows[0];
     }
 
-    private async save(tx: Queryable, part: UiPart): Promise<void> {
+    private async save(tx: Queryable, part: UiPart, before: object | undefined): Promise<void> {
         await tx.query('UPDATE part SET name = $4, revision = $5, body = $6, updated_at = $7 WHERE workspace_id = $1 AND kind = $2 AND id = $3', [
             this.db.workspaceId,
             part.kind,
@@ -217,6 +233,6 @@ export class PgPartRepository implements UiPartRepository {
             JSON.stringify(part.body),
             part.updatedAt
         ]);
-        await this.onChange(tx, { workspaceId: this.db.workspaceId, kind: part.kind, id: part.id });
+        await this.onChange(tx, { workspaceId: this.db.workspaceId, kind: part.kind, id: part.id, ...(before !== undefined && { before }), after: part.body });
     }
 }

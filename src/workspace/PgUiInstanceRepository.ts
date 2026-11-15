@@ -1,6 +1,18 @@
 import { diffInstance, isAppId } from '@punyts/stateui-mcp';
 import type { InstanceDiff, InstanceRead, PersonaDataset, UiInstanceRepository } from '@punyts/stateui-mcp';
+import type { Queryable } from '../db/Database.js';
 import type { WorkspaceDb } from './WorkspaceDb.js';
+
+/** One write of a persona binding's records, with the records it replaces, for `onData` */
+export interface PersonaDataWrite {
+    readonly workspaceId: string;
+    readonly persona: string;
+    readonly appId: string;
+    readonly binding: string;
+    readonly model: string;
+    readonly before: unknown;
+    readonly after: unknown;
+}
 
 type DiffInput = Parameters<typeof diffInstance>[0];
 type JsonObject = Parameters<UiInstanceRepository['write']>[1];
@@ -13,7 +25,9 @@ type JsonObject = Parameters<UiInstanceRepository['write']>[1];
 export class PgUiInstanceRepository implements UiInstanceRepository {
     constructor(
         private readonly db: WorkspaceDb,
-        private readonly persona: string
+        private readonly persona: string,
+        /** Called in the transaction of every write of a persona binding's records, such as to queue their embeddings */
+        private readonly onData?: (tx: Queryable, write: PersonaDataWrite) => Promise<void>
     ) {}
 
     async get(appId: string): Promise<InstanceRead<InstanceDiff>> {
@@ -50,11 +64,16 @@ export class PgUiInstanceRepository implements UiInstanceRepository {
     async writeData(appId: string, binding: string, dataset: PersonaDataset): Promise<void> {
         if (!isAppId(appId)) throw new Error('An app id is a UUID');
         await this.db.transaction(async (tx) => {
+            const before =
+                this.onData === undefined
+                    ? undefined
+                    : (await tx.query<{ records: unknown }>('SELECT records FROM persona_dataset WHERE workspace_id = $1 AND persona = $2 AND app_id = $3 AND binding = $4 FOR UPDATE', [this.db.workspaceId, this.persona, appId.toLowerCase(), binding])).rows[0]?.records;
             await tx.query(
                 `INSERT INTO persona_dataset (workspace_id, persona, app_id, binding, model, records, updated_at) VALUES ($1, $2, $3, $4, $5, $6, now())
                  ON CONFLICT (workspace_id, persona, app_id, binding) DO UPDATE SET model = EXCLUDED.model, records = EXCLUDED.records, updated_at = now()`,
                 [this.db.workspaceId, this.persona, appId.toLowerCase(), binding, dataset.model, JSON.stringify(dataset.records)]
             );
+            await this.onData?.(tx, { workspaceId: this.db.workspaceId, persona: this.persona, appId: appId.toLowerCase(), binding, model: dataset.model, before, after: dataset.records });
         });
     }
 

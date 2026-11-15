@@ -37,6 +37,10 @@ export interface EmbeddingSearch {
     readonly owner?: string;
     /** Only these sources */
     readonly sourceIds?: readonly string[];
+    /** Only the sources whose id starts with this, such as one dataset's records */
+    readonly sourcePrefix?: string;
+    /** Only this field of each source (a record field) */
+    readonly field?: string;
 }
 
 /** Adds a job in the transaction given, so it commits with the write that called for it */
@@ -136,6 +140,14 @@ export class EmbeddingIndex {
         if (search.sourceIds !== undefined) {
             params.push(search.sourceIds);
             filter += ` AND source_id = ANY($${params.length}::text[])`;
+        }
+        if (search.sourcePrefix !== undefined) {
+            params.push(search.sourcePrefix.length, search.sourcePrefix);
+            filter += ` AND left(source_id, $${params.length - 1}) = $${params.length}`;
+        }
+        if (search.field !== undefined) {
+            params.push(search.field);
+            filter += ` AND field = $${params.length}`;
         }
         return this.db.transaction(
             async (tx) =>
