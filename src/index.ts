@@ -12,3 +12,8 @@ export { PgUiFileStore } from './workspace/PgUiFileStore.js';
 export { PgUiErrorLog } from './workspace/PgUiErrorLog.js';
 export { txWorkspaceDb, workspaceDb } from './workspace/WorkspaceDb.js';
 export type { WorkspaceDb } from './workspace/WorkspaceDb.js';
+export { hashEmbedder, LOCAL_MODEL, localEmbedder } from './embeddings/Embedder.js';
+export type { EmbedPurpose, Embedder } from './embeddings/Embedder.js';
+export { EmbeddingIndex, enqueueEmbedding } from './embeddings/EmbeddingIndex.js';
+export type { EmbeddingHit, EmbeddingJob, EmbeddingSearch, EmbeddingSource, SourceText } from './embeddings/EmbeddingIndex.js';
+export { PART_SOURCE, partSearchText, partSource } from './embeddings/partText.js';

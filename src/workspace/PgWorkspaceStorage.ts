@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { isAppId } from '@punyts/stateui-mcp';
 import type { AppFolderStore, ServicesStorage } from '@punyts/stateui-mcp';
 import type { Database } from '../db/Database.js';
+import { enqueueEmbedding } from '../embeddings/EmbeddingIndex.js';
+import { PART_SOURCE } from '../embeddings/partText.js';
 import { PgPartRepository } from './PgPartRepository.js';
 import { PgUiErrorLog } from './PgUiErrorLog.js';
 import { PgUiFileRepository } from './PgUiFileRepository.js';
@@ -13,6 +15,8 @@ import type { WorkspaceDb } from './WorkspaceDb.js';
 export interface PgWorkspaceStorageOptions {
     readonly now?: () => Date;
     readonly newId?: () => string;
+    /** Queues the embedding of every part that changes, in the transaction of the change */
+    readonly embedParts?: boolean;
 }
 
 /** What an app keeps beside its part: its files, their bytes and its preview errors; removed with the app */
@@ -40,7 +44,11 @@ class PgAppFolderStore implements AppFolderStore {
 export function pgWorkspaceStorage(db: Database, workspaceId: string, options: PgWorkspaceStorageOptions = {}): ServicesStorage {
     const workspace = workspaceDb(db, workspaceId);
     const now = options.now ?? (() => new Date());
-    const parts = new PgPartRepository(workspace, { now, newId: options.newId ?? randomUUID });
+    const parts = new PgPartRepository(workspace, {
+        now,
+        newId: options.newId ?? randomUUID,
+        ...(options.embedParts === true && { onChange: (tx, change) => enqueueEmbedding(tx, { workspaceId: change.workspaceId, sourceKind: PART_SOURCE, sourceId: `${change.kind}/${change.id}` }) })
+    });
     return {
         parts,
         importPart: (part) => parts.put(part),

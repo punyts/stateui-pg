@@ -37,6 +37,8 @@ function toPart<K extends PartKind>(row: PartRow): UiPart<K> {
 export interface PgPartRepositoryOptions {
     readonly now?: () => Date;
     readonly newId?: () => string;
+    /** Called in the transaction of every change of a part (made, written, renamed, rewritten or deleted), such as to queue its embedding */
+    readonly onChange?: (tx: Queryable, change: { readonly workspaceId: string; readonly kind: PartKind; readonly id: string }) => Promise<void>;
 }
 
 /**
@@ -47,6 +49,7 @@ export interface PgPartRepositoryOptions {
 export class PgPartRepository implements UiPartRepository {
     private readonly now: () => Date;
     private readonly newId: () => string;
+    private readonly onChange: NonNullable<PgPartRepositoryOptions['onChange']>;
 
     constructor(
         private readonly db: WorkspaceDb,
@@ -54,6 +57,7 @@ export class PgPartRepository implements UiPartRepository {
     ) {
         this.now = options.now ?? (() => new Date());
         this.newId = options.newId ?? randomUUID;
+        this.onChange = options.onChange ?? (async () => undefined);
     }
 
     async create<K extends PartKind>(input: CreateUiPartInput<K>): Promise<CreateUiPartResult<K>> {
@@ -75,6 +79,7 @@ export class PgPartRepository implements UiPartRepository {
                     part.createdAt,
                     part.updatedAt
                 ]);
+                await this.onChange(tx, { workspaceId: this.db.workspaceId, kind: part.kind, id: part.id });
                 return { kind: 'created', part: { ...part, body: structuredClone(part.body) } };
             });
         } catch (error) {
@@ -129,6 +134,7 @@ export class PgPartRepository implements UiPartRepository {
             if (row === undefined) return { kind: 'not-found' };
             if (!isRevisionCurrent(row.revision, expectedRevision)) return { kind: 'conflict', currentRevision: row.revision };
             await tx.query('DELETE FROM part WHERE workspace_id = $1 AND kind = $2 AND id = $3', [this.db.workspaceId, kind, row.id]);
+            await this.onChange(tx, { workspaceId: this.db.workspaceId, kind, id: row.id });
             return { kind: 'deleted' };
         });
     }
@@ -211,5 +217,6 @@ export class PgPartRepository implements UiPartRepository {
             JSON.stringify(part.body),
             part.updatedAt
         ]);
+        await this.onChange(tx, { workspaceId: this.db.workspaceId, kind: part.kind, id: part.id });
     }
 }
