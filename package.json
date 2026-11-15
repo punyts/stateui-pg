@@ -1,0 +1,43 @@
+{
+    "name": "@punyts/stateui-pg",
+    "version": "0.1.0",
+    "description": "Postgres storage for StateUI servers: the database, the migrator and Postgres adapters for the stateui-mcp storage ports",
+    "type": "module",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "exports": {
+        ".": "./dist/index.js",
+        "./testing": "./dist/testing/index.js"
+    },
+    "files": [
+        "dist",
+        "migrations",
+        "LICENSE",
+        "README.md"
+    ],
+    "engines": {
+        "node": ">=22"
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json",
+        "typecheck": "tsc -p tsconfig.json --noEmit",
+        "test": "vitest run"
+    },
+    "keywords": [
+        "punyts",
+        "stateui",
+        "postgres"
+    ],
+    "author": "",
+    "license": "MIT",
+    "dependencies": {
+        "@punyts/stateui-mcp": "^0.1.0",
+        "pg": "^8.16.3"
+    },
+    "devDependencies": {
+        "@types/node": "^26.1.1",
+        "@types/pg": "^8.15.5",
+        "typescript": "^5.9.3",
+        "vitest": "^4.1.10"
+    }
+}
