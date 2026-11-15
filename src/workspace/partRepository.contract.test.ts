@@ -151,8 +151,10 @@ describe.each(ADAPTERS)('UiPartRepository contract: %s', (_name, createRepositor
         const results = await Promise.all([parts.write('models', 'product', first, 1), parts.write('models', 'product', second, 1)]);
 
         // Assert
-        expect(results).toEqual([{ kind: 'written', revision: 2 }, { kind: 'conflict', currentRevision: 2 }]);
-        expect((await parts.findByName('models', 'product'))?.body).toEqual(first);
+        // Two connections race for the row: either may win, and the other sees the winner's revision
+        expect(results).toEqual(expect.arrayContaining([{ kind: 'written', revision: 2 }, { kind: 'conflict', currentRevision: 2 }]));
+        const winner = results[0]?.kind === 'written' ? first : second;
+        expect((await parts.findByName('models', 'product'))?.body).toEqual(winner);
     });
 
     it('should keep the stored part when the caller changes what it passed or got', async () => {

@@ -17,3 +17,5 @@ export type { EmbedPurpose, Embedder } from './embeddings/Embedder.js';
 export { EmbeddingIndex, enqueueEmbedding } from './embeddings/EmbeddingIndex.js';
 export type { EmbeddingHit, EmbeddingJob, EmbeddingSearch, EmbeddingSource, SourceText } from './embeddings/EmbeddingIndex.js';
 export { PART_SOURCE, partSearchText, partSource } from './embeddings/partText.js';
+export { CatalogEmbeddings, CLOSE_SCORES, DEFAULT_CLOSE_SCORE } from './embeddings/CatalogEmbeddings.js';
+export type { CatalogEntryText, CatalogRanking } from './embeddings/CatalogEmbeddings.js';
