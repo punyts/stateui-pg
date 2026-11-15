@@ -31,6 +31,7 @@
     "author": "",
     "license": "MIT",
     "dependencies": {
+        "@punyts/state-sync": "^0.8.0",
         "@punyts/stateui-mcp": "^0.1.0",
         "pg": "^8.16.3"
     },

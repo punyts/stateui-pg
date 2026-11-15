@@ -31,6 +31,12 @@ export interface StateWriteOptions {
     readonly keep?: readonly string[];
     /** The id of the change that caused the write, kept in the log */
     readonly id?: string;
+    /** The revision the namespace is at after the write, for a writer that numbers its own changes (an authority); the next one by default */
+    readonly revision?: number;
+    /** Whether to log the rows the write changed in `state_change`; true by default (an authority logs its own changes) */
+    readonly log?: boolean;
+    /** The owner epoch the rows were written under */
+    readonly epoch?: number;
 }
 
 const isObject = (value: unknown): value is JsonObject => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -113,20 +119,21 @@ export class PgStateStore {
             return old === undefined || old.kind !== row.kind || old.parent !== row.parent || old.position !== row.position || JSON.stringify(old.value) !== JSON.stringify(row.value);
         });
         const removed = existing.filter((row) => !after.has(row.path));
-        if (changed.length === 0 && removed.length === 0) return head;
-        const revision = head + 1;
+        if (changed.length === 0 && removed.length === 0 && options.revision === undefined) return head;
+        const revision = options.revision ?? head + 1;
+        const logged = options.log !== false;
         let seq = 0;
         for (const row of removed) {
             await tx.query('DELETE FROM state_node WHERE address = $1 AND path = $2', [place.address, row.path]);
-            if (!after.has(row.path)) await this.log(tx, place, revision, (seq += 1), options.id, row.path, 'delete', null);
+            if (logged && !after.has(row.path)) await this.log(tx, place, revision, (seq += 1), options.id, row.path, 'delete', null);
         }
         for (const row of changed) {
             await tx.query(
-                `INSERT INTO state_node (workspace_id, address, path, parent, position, kind, value, revision) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                 ON CONFLICT (address, path) DO UPDATE SET workspace_id = EXCLUDED.workspace_id, parent = EXCLUDED.parent, position = EXCLUDED.position, kind = EXCLUDED.kind, value = EXCLUDED.value, revision = EXCLUDED.revision`,
-                [place.workspaceId, place.address, row.path, row.parent, row.position, row.kind, row.value === null ? null : JSON.stringify(row.value), revision]
+                `INSERT INTO state_node (workspace_id, address, path, parent, position, kind, value, revision, epoch) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 ON CONFLICT (address, path) DO UPDATE SET workspace_id = EXCLUDED.workspace_id, parent = EXCLUDED.parent, position = EXCLUDED.position, kind = EXCLUDED.kind, value = EXCLUDED.value, revision = EXCLUDED.revision, epoch = EXCLUDED.epoch`,
+                [place.workspaceId, place.address, row.path, row.parent, row.position, row.kind, row.value === null ? null : JSON.stringify(row.value), revision, options.epoch ?? 0]
             );
-            await this.log(tx, place, revision, (seq += 1), options.id, row.path, 'set', row.value);
+            if (logged) await this.log(tx, place, revision, (seq += 1), options.id, row.path, 'set', row.value);
         }
         await tx.query('UPDATE namespace_head SET revision = $2, durable_revision = $2, updated_at = now() WHERE address = $1', [place.address, revision]);
         return revision;

@@ -26,3 +26,5 @@ export type { PartChange } from './workspace/PgPartRepository.js';
 export type { PersonaDataWrite } from './workspace/PgUiInstanceRepository.js';
 export { PgStateStore, splitUserState } from './state/PgStateStore.js';
 export type { StatePlace, StateRead, StateWriteOptions } from './state/PgStateStore.js';
+export { PgDirectory, PgEpochStorage, PgOwnershipStore } from './state/PgDirectory.js';
+export type { DirectoryNode } from './state/PgDirectory.js';
