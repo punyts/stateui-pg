@@ -24,3 +24,5 @@ export { RecordSimilarity } from './embeddings/RecordSimilarity.js';
 export type { SimilarAnswer, SimilarPlace, SimilarRecord, SimilarRequest } from './embeddings/RecordSimilarity.js';
 export type { PartChange } from './workspace/PgPartRepository.js';
 export type { PersonaDataWrite } from './workspace/PgUiInstanceRepository.js';
+export { PgStateStore, splitUserState } from './state/PgStateStore.js';
+export type { StatePlace, StateRead, StateWriteOptions } from './state/PgStateStore.js';

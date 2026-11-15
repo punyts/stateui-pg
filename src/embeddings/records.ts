@@ -1,10 +1,11 @@
+import { userStateAddress } from '@punyts/stateui-mcp';
 import type { Queryable } from '../db/Database.js';
 import { enqueueEmbedding } from './EmbeddingIndex.js';
 import type { EmbeddingSource } from './EmbeddingIndex.js';
 
 /** A record field of a dataset part: `<dataset part id>/<record key>`, one vector per embedded field, everyone's */
 export const RECORD_SOURCE = 'record';
-/** A record field of a persona binding: `<app id>/<binding>/<persona>/<record key>`, one vector per embedded field, the persona's own */
+/** A record field of a persona binding: `<user state address>/<binding>/<record key>`, one vector per embedded field, the person's own */
 export const PERSONA_RECORD_SOURCE = 'persona-record';
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -75,16 +76,19 @@ export async function queueRecordChanges(tx: Queryable, change: { readonly works
         await tx.query<{ id: string; body: unknown }>("SELECT id, body FROM part WHERE workspace_id = $1 AND kind = 'data' AND body->>'model' = ANY($2::text[])", [workspaceId, modelNames])
     ).rows;
     for (const dataset of datasets) for (const key of Object.keys(recordsOf(dataset.body))) for (const field of fields) await queue(RECORD_SOURCE, `${dataset.id}/${key}`, field);
-    const bindings = (
-        await tx.query<{ persona: string; app_id: string; binding: string; records: Records }>('SELECT persona, app_id, binding, records FROM persona_dataset WHERE workspace_id = $1 AND model = ANY($2::text[])', [
-            workspaceId,
-            modelNames
-        ])
+    // The records of every persona binding of the model, in every person's state
+    const records = (
+        await tx.query<{ address: string; path: string }>(
+            `SELECT record.address, record.path FROM state_node binding
+               JOIN state_node record ON record.address = binding.address AND record.parent = binding.path
+              WHERE binding.workspace_id = $1 AND binding.kind = 'object' AND binding.parent = 'data' AND binding.value->>'model' = ANY($2::text[])`,
+            [workspaceId, modelNames]
+        )
     ).rows;
-    for (const row of bindings) {
-        for (const key of Object.keys(isObject(row.records) ? row.records : {})) {
-            for (const field of fields) await queue(PERSONA_RECORD_SOURCE, `${row.app_id}/${row.binding}/${row.persona}/${key}`, field);
-        }
+    for (const row of records) {
+        const [, binding, key] = /^data\.([^.]+)\.(.+)$/s.exec(row.path) ?? [];
+        if (binding === undefined || key === undefined) continue;
+        for (const field of fields) await queue(PERSONA_RECORD_SOURCE, `${row.address}/${binding}/${key}`, field);
     }
 }
 
@@ -96,8 +100,9 @@ export async function queuePersonaRecordChanges(
     const fields = embeddedFields(await modelBody(tx, write.workspaceId, write.model));
     const before = isObject(write.before) ? write.before : {};
     const after = isObject(write.after) ? write.after : {};
+    const address = userStateAddress(write.workspaceId, write.persona, write.appId);
     for (const [key, field] of changedRecordFields(before, after, fields)) {
-        await enqueueEmbedding(tx, { workspaceId: write.workspaceId, sourceKind: PERSONA_RECORD_SOURCE, sourceId: `${write.appId}/${write.binding}/${write.persona}/${key}`, field });
+        await enqueueEmbedding(tx, { workspaceId: write.workspaceId, sourceKind: PERSONA_RECORD_SOURCE, sourceId: `${address}/${write.binding}/${key}`, field });
     }
 }
 
@@ -120,14 +125,14 @@ export const recordSource: EmbeddingSource = async (tx, job) => {
 
 /** The text of a persona record's field while its model still embeds the field, as the persona's own */
 export const personaRecordSource: EmbeddingSource = async (tx, job) => {
-    const [appId, binding, persona, key] = segments(job.sourceId, 4) ?? [];
-    if (appId === undefined || binding === undefined || persona === undefined || key === undefined) return undefined;
-    const row = (
-        await tx.query<{ model: string; records: Records }>('SELECT model, records FROM persona_dataset WHERE workspace_id = $1 AND persona = $2 AND app_id = $3 AND binding = $4', [job.workspaceId, persona, appId, binding])
-    ).rows[0];
-    if (row === undefined || !embeddedFields(await modelBody(tx, job.workspaceId, row.model)).includes(job.field)) return undefined;
-    const value = fieldOf(isObject(row.records) ? row.records[key] : undefined, job.field);
-    return typeof value === 'string' ? { text: value, owner: persona } : undefined;
+    const [owner, appId, scope, binding, key] = segments(job.sourceId, 5) ?? [];
+    if (owner === undefined || appId === undefined || scope !== 'user' || binding === undefined || key === undefined) return undefined;
+    const address = `${owner}/${appId}/${scope}`;
+    const model = (await tx.query<{ value: { model?: unknown } | null }>("SELECT value FROM state_node WHERE address = $1 AND path = $2 AND kind = 'object'", [address, `data.${binding}`])).rows[0]?.value?.model;
+    if (typeof model !== 'string' || !embeddedFields(await modelBody(tx, job.workspaceId, model)).includes(job.field)) return undefined;
+    const record = (await tx.query<{ value: Json }>("SELECT value FROM state_node WHERE address = $1 AND path = $2 AND kind = 'value'", [address, `data.${binding}.${key}`])).rows[0]?.value;
+    const value = fieldOf(record, job.field);
+    return typeof value === 'string' ? { text: value, owner } : undefined;
 };
 
 /**
@@ -148,12 +153,12 @@ export async function queueAllRecords(db: Queryable): Promise<void> {
     );
     await db.query(
         `INSERT INTO embedding_job (workspace_id, source_kind, source_id, field)
-         SELECT binding.workspace_id, $1, binding.app_id::text || '/' || binding.binding || '/' || binding.persona || '/' || record.key, field.key
-           FROM persona_dataset binding
-           JOIN part model ON model.workspace_id = binding.workspace_id AND model.kind = 'models' AND model.name = binding.model
-          CROSS JOIN LATERAL json_each(CASE WHEN json_typeof(binding.records) = 'object' THEN binding.records ELSE '{}'::json END) record
+         SELECT binding.workspace_id, $1, binding.address || '/' || substr(binding.path, 6) || '/' || substr(record.path, length(binding.path) + 2), field.key
+           FROM state_node binding
+           JOIN state_node record ON record.address = binding.address AND record.parent = binding.path
+           JOIN part model ON model.workspace_id = binding.workspace_id AND model.kind = 'models' AND model.name = binding.value->>'model'
           CROSS JOIN LATERAL json_each(CASE WHEN json_typeof(model.body->'fields') = 'object' THEN model.body->'fields' ELSE '{}'::json END) field
-          WHERE ${embedded}`,
+          WHERE binding.kind = 'object' AND binding.parent = 'data' AND ${embedded}`,
         [PERSONA_RECORD_SOURCE]
     );
 }

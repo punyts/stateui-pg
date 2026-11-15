@@ -1,3 +1,4 @@
+import { userStateAddress } from '@punyts/stateui-mcp';
 import type { UiPartRepository } from '@punyts/stateui-mcp';
 import type { EmbeddingIndex } from './EmbeddingIndex.js';
 import { embeddedFields, PERSONA_RECORD_SOURCE, RECORD_SOURCE } from './records.js';
@@ -57,9 +58,8 @@ export class RecordSimilarity {
         if (binding['scope'] === 'persona' && typeof binding['model'] === 'string') {
             const refusal = await this.refusal(place, binding['model'], request.field);
             if (refusal !== undefined) return { kind: 'refused', reason: refusal };
-            // As the persona's records are stored: under the persona exactly as the instance names it
-            const persona = place.persona;
-            return this.search(place.workspaceId, PERSONA_RECORD_SOURCE, `${place.appId.toLowerCase()}/${request.binding}/${persona}/`, request, limit, persona);
+            // The persona's own state of the app, where its records are
+            return this.search(place.workspaceId, PERSONA_RECORD_SOURCE, `${userStateAddress(place.workspaceId, place.persona, place.appId)}/${request.binding}/`, request, limit);
         }
         return { kind: 'refused', reason: `the data binding "${request.binding}" is neither a dataset nor a persona binding` };
     }
