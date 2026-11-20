@@ -112,9 +112,16 @@ export class PgEpochStorage implements EpochStorage {
         private readonly onSave?: { readonly read: readonly string[]; readonly run: (tx: Queryable, save: NamespaceSave) => Promise<void> }
     ) {}
 
-    /** Removes a namespace whole: its rows, its log and its head */
-    async remove(address: string): Promise<void> {
-        await this.db.transaction((tx) => this.store.remove(tx, address), { workspaceIds: [this.workspaceOf(address)] });
+    /** Removes a namespace whole: its rows, its log and its head. With `epoch`, refused under one older than its newest */
+    async remove(address: string, epoch?: number): Promise<void> {
+        await this.db.transaction(
+            async (tx) => {
+                const current = Number((await tx.query<{ epoch: string | number }>('SELECT epoch FROM namespace_head WHERE address = $1 FOR UPDATE', [address])).rows[0]?.epoch ?? 0);
+                if (epoch !== undefined && epoch < current) throw new FencedError(address, epoch, current);
+                await this.store.remove(tx, address);
+            },
+            { workspaceIds: [this.workspaceOf(address)] }
+        );
     }
 
     async load(address: string): Promise<StoredNamespace | undefined> {
