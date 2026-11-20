@@ -81,7 +81,8 @@ export async function queueRecordChanges(tx: Queryable, change: { readonly works
         await tx.query<{ address: string; path: string }>(
             `SELECT record.address, record.path FROM state_node binding
                JOIN state_node record ON record.address = binding.address AND record.parent = binding.path
-              WHERE binding.workspace_id = $1 AND binding.kind = 'object' AND binding.parent = 'data' AND binding.value->>'model' = ANY($2::text[])`,
+               JOIN state_node models ON models.address = binding.address AND models.path = 'models' AND models.kind = 'value'
+              WHERE binding.workspace_id = $1 AND binding.kind = 'object' AND binding.parent = 'data' AND models.value->>substr(binding.path, 6) = ANY($2::text[])`,
             [workspaceId, modelNames]
         )
     ).rows;
@@ -92,19 +93,28 @@ export async function queueRecordChanges(tx: Queryable, change: { readonly works
     }
 }
 
-/** Queues the record fields of one persona binding that a write changes, in its transaction */
-export async function queuePersonaRecordChanges(
-    tx: Queryable,
-    write: { readonly workspaceId: string; readonly persona: string; readonly appId: string; readonly binding: string; readonly model: string; readonly before: unknown; readonly after: unknown }
-): Promise<void> {
-    const fields = embeddedFields(await modelBody(tx, write.workspaceId, write.model));
-    const before = isObject(write.before) ? write.before : {};
-    const after = isObject(write.after) ? write.after : {};
-    const address = userStateAddress(write.workspaceId, write.persona, write.appId);
-    for (const [key, field] of changedRecordFields(before, after, fields)) {
-        await enqueueEmbedding(tx, { workspaceId: write.workspaceId, sourceKind: PERSONA_RECORD_SOURCE, sourceId: `${address}/${write.binding}/${key}`, field });
+/**
+ * Queues the record fields that a save of a person's state changes, in its transaction (`PgEpochStorage`'s `onSave`,
+ * reading `data` and `models`): for each persona binding, before or after, the fields its model embeds of the
+ * records that differ
+ */
+export const queueNamespaceRecordChanges = {
+    read: ['data', 'models'] as const,
+    run: async (tx: Queryable, save: { readonly workspaceId: string; readonly address: string; readonly before: Readonly<Record<string, unknown>>; readonly after: Readonly<Record<string, unknown>> }): Promise<void> => {
+        const was = { data: isObject(save.before['data']) ? save.before['data'] : {}, models: isObject(save.before['models']) ? save.before['models'] : {} };
+        const now = { data: isObject(save.after['data']) ? save.after['data'] : {}, models: isObject(save.after['models']) ? save.after['models'] : {} };
+        for (const binding of new Set([...Object.keys(was.data), ...Object.keys(now.data)])) {
+            const before = isObject(was.data[binding]) ? was.data[binding] : {};
+            const after = isObject(now.data[binding]) ? now.data[binding] : {};
+            const models = [...new Set([was.models[binding], now.models[binding]].filter((model): model is string => typeof model === 'string'))];
+            const fields = new Set<string>();
+            for (const model of models) for (const field of embeddedFields(await modelBody(tx, save.workspaceId, model))) fields.add(field);
+            // another model: every embedded field of every record either side holds, as for a dataset
+            const pairs = models.length > 1 ? [...new Set([...Object.keys(before), ...Object.keys(after)])].flatMap((key) => [...fields].map((field) => [key, field] as const)) : changedRecordFields(before, after, [...fields]);
+            for (const [key, field] of pairs) await enqueueEmbedding(tx, { workspaceId: save.workspaceId, sourceKind: PERSONA_RECORD_SOURCE, sourceId: `${save.address}/${binding}/${key}`, field });
+        }
     }
-}
+};
 
 /** Splits a source id into its first `count - 1` segments and the rest, which is a record key and may hold `/` */
 function segments(sourceId: string, count: number): string[] | undefined {
@@ -128,7 +138,7 @@ export const personaRecordSource: EmbeddingSource = async (tx, job) => {
     const [owner, appId, scope, binding, key] = segments(job.sourceId, 5) ?? [];
     if (owner === undefined || appId === undefined || scope !== 'user' || binding === undefined || key === undefined) return undefined;
     const address = `${owner}/${appId}/${scope}`;
-    const model = (await tx.query<{ value: { model?: unknown } | null }>("SELECT value FROM state_node WHERE address = $1 AND path = $2 AND kind = 'object'", [address, `data.${binding}`])).rows[0]?.value?.model;
+    const model = (await tx.query<{ value: Record<string, unknown> | null }>("SELECT value FROM state_node WHERE address = $1 AND path = 'models' AND kind = 'value'", [address])).rows[0]?.value?.[binding];
     if (typeof model !== 'string' || !embeddedFields(await modelBody(tx, job.workspaceId, model)).includes(job.field)) return undefined;
     const record = (await tx.query<{ value: Json }>("SELECT value FROM state_node WHERE address = $1 AND path = $2 AND kind = 'value'", [address, `data.${binding}.${key}`])).rows[0]?.value;
     const value = fieldOf(record, job.field);
@@ -156,7 +166,8 @@ export async function queueAllRecords(db: Queryable): Promise<void> {
          SELECT binding.workspace_id, $1, binding.address || '/' || substr(binding.path, 6) || '/' || substr(record.path, length(binding.path) + 2), field.key
            FROM state_node binding
            JOIN state_node record ON record.address = binding.address AND record.parent = binding.path
-           JOIN part model ON model.workspace_id = binding.workspace_id AND model.kind = 'models' AND model.name = binding.value->>'model'
+           JOIN state_node models ON models.address = binding.address AND models.path = 'models' AND models.kind = 'value'
+           JOIN part model ON model.workspace_id = binding.workspace_id AND model.kind = 'models' AND model.name = models.value->>substr(binding.path, 6)
           CROSS JOIN LATERAL json_each(CASE WHEN json_typeof(model.body->'fields') = 'object' THEN model.body->'fields' ELSE '{}'::json END) field
           WHERE binding.kind = 'object' AND binding.parent = 'data' AND ${embedded}`,
         [PERSONA_RECORD_SOURCE]

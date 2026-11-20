@@ -8,7 +8,7 @@ import { STATEUI_PG_MIGRATIONS } from '../migrations.js';
 import { createTestDatabase } from '../testing/testDatabase.js';
 import type { TestDatabase } from '../testing/testDatabase.js';
 import { workspaceDb } from '../workspace/WorkspaceDb.js';
-import { PgUiInstanceRepository } from '../workspace/PgUiInstanceRepository.js';
+import { pgWorkspaceStorage } from '../workspace/PgWorkspaceStorage.js';
 import { PgStateStore } from './PgStateStore.js';
 
 const WORKSPACE = 'e0000000-0000-4000-8000-000000000005';
@@ -92,10 +92,10 @@ describe('PgStateStore', () => {
     });
 });
 
-describe('PgUiInstanceRepository on state_node', () => {
+describe('instances as stored namespaces on state_node', () => {
     it("should keep a persona's diff, its own unbound data and its persona records apart, each at the persona's address", async () => {
         // Arrange
-        const repository = new PgUiInstanceRepository(workspaceDb(test.db, WORKSPACE), 'u1');
+        const repository = pgWorkspaceStorage(test.db, WORKSPACE).instances('u1');
         const app = '10000000-0000-4000-8000-000000000007';
 
         // Act
@@ -111,7 +111,7 @@ describe('PgUiInstanceRepository on state_node', () => {
 
     it('should refuse a save under an older epoch than the instance was last saved under, and take a newer one', async () => {
         // Arrange
-        const repository = new PgUiInstanceRepository(workspaceDb(test.db, WORKSPACE), 'u2');
+        const repository = pgWorkspaceStorage(test.db, WORKSPACE).instances('u2');
         const app = '10000000-0000-4000-8000-000000000008';
         const empty = { app: {}, screens: {}, data: {} } as never;
         await repository.write(app, empty, { app: {}, screens: { home: { x: 1 } }, data: {} } as never, { epoch: 2 });
@@ -148,8 +148,17 @@ describe('0004_state', () => {
             const mine = await older.db.transaction((tx) => store.read(tx, ADDRESS), { workspaceIds: [WORKSPACE] });
             const theirs = await older.db.transaction((tx) => store.read(tx, `u2/${APP}/user`), { workspaceIds: [WORKSPACE] });
             expect(JSON.stringify(mine.value)).toBe('{"route":{"screen":"b"},"theme":{"x":1}}');
-            expect(JSON.stringify(theirs.value)).toBe('{"data":{"bag":{"k2":{"q":2},"k1":{"q":1}}}}');
-            expect(theirs.meta.get('data.bag')).toEqual({ model: 'line' });
+            // 0006 then puts the binding's model into the namespace's own state, after its other keys
+            expect(JSON.stringify(theirs.value)).toBe('{"data":{"bag":{"k2":{"q":2},"k1":{"q":1}}},"models":{"bag":"line"}}');
+            expect(mine.value).not.toHaveProperty('models');
+            // and the instance reads back whole from the rows of before: its records with their model, in key order
+            const migrated = pgWorkspaceStorage(older.db, WORKSPACE).instances('u2');
+            expect(JSON.stringify((await migrated.getData(APP, 'bag')).value)).toBe('{"model":"line","records":{"k2":{"q":2},"k1":{"q":1}}}');
+            // a save after the migration leaves the binding's row without the model it used to keep
+            await migrated.writeData(APP, 'bag', { model: 'line', records: { k2: { q: 2 }, k1: { q: 1 }, k3: { q: 3 } } } as never);
+            const saved = await older.db.transaction((tx) => store.read(tx, `u2/${APP}/user`), { workspaceIds: [WORKSPACE] });
+            expect(JSON.stringify(saved.value)).toBe('{"data":{"bag":{"k2":{"q":2},"k1":{"q":1},"k3":{"q":3}}},"models":{"bag":"line"}}');
+            expect(saved.meta.get('data.bag')).toBeUndefined();
             const head = (await older.db.query<{ updated_at: Date }>('SELECT updated_at FROM namespace_head WHERE address = $1', [ADDRESS])).rows[0];
             expect(head?.updated_at.toISOString()).toBe('2026-01-02T00:00:00.000Z');
             expect((await older.db.query("SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name IN ('instance', 'persona_dataset')")).rowCount).toBe(0);

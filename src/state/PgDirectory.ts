@@ -1,7 +1,7 @@
 import { FencedError } from '@punyts/state-sync/authority';
 import type { RevisedChange } from '@punyts/state-sync';
 import type { EpochStorage, OwnershipRecord, OwnershipStore, StoredNamespace } from '@punyts/state-sync/authority';
-import type { Database } from '../db/Database.js';
+import type { Database, Queryable } from '../db/Database.js';
 import { PgStateStore } from './PgStateStore.js';
 import type { JsonObject } from './PgStateStore.js';
 
@@ -35,6 +35,15 @@ export class PgOwnershipStore implements OwnershipStore {
         const renewed = await this.db.query('UPDATE namespace_owner SET lease_until = now() + make_interval(secs => $4::double precision / 1000) WHERE address = $1 AND node = $2 AND epoch = $3', [address, node, epoch, leaseMs]);
         return (renewed.rowCount ?? 0) === 1;
     }
+}
+
+/** One save of a namespace, as `PgEpochStorage`'s `onSave` sees it */
+export interface NamespaceSave {
+    readonly workspaceId: string;
+    readonly address: string;
+    /** What is stored now under each key asked for; undefined for a key that holds no object */
+    readonly before: Readonly<Record<string, JsonObject | undefined>>;
+    readonly after: JsonObject;
 }
 
 /** A node of the statenet as the directory lists it */
@@ -92,10 +101,21 @@ export class PgEpochStorage implements EpochStorage {
     private readonly store = new PgStateStore();
 
     constructor(
-        private readonly db: Database,
+        /** The database, or anything that runs work in a transaction (one already open, for a write that is part of it) */
+        private readonly db: Pick<Database, 'transaction'>,
         private readonly workspaceOf: (address: string) => string,
-        private readonly logLength = 1000
+        private readonly logLength = 1000,
+        /**
+         * Called in the transaction of every save, before the rows change, with what is stored under `read` (top-level
+         * keys) and the state about to be: for what must be queued with the save, such as the embeddings of records
+         */
+        private readonly onSave?: { readonly read: readonly string[]; readonly run: (tx: Queryable, save: NamespaceSave) => Promise<void> }
     ) {}
+
+    /** Removes a namespace whole: its rows, its log and its head */
+    async remove(address: string): Promise<void> {
+        await this.db.transaction((tx) => this.store.remove(tx, address), { workspaceIds: [this.workspaceOf(address)] });
+    }
 
     async load(address: string): Promise<StoredNamespace | undefined> {
         const workspaceId = this.workspaceOf(address);
@@ -127,6 +147,11 @@ export class PgEpochStorage implements EpochStorage {
                 const current = Number(head?.epoch ?? 0);
                 if (epoch < current) throw new FencedError(address, epoch, current);
                 const from = Number(head?.revision ?? 0);
+                if (this.onSave !== undefined) {
+                    const before: Record<string, JsonObject | undefined> = {};
+                    for (const key of this.onSave.read) before[key] = (await this.store.read(tx, address, key)).value;
+                    await this.onSave.run(tx, { workspaceId, address, before, after: stored.state as JsonObject });
+                }
                 await this.store.write(tx, { workspaceId, address }, '', stored.state as JsonObject, { revision: stored.revision, log: false, epoch });
                 // the authority's own changes are the log, for catch-up and audit (seq 0; the store's row log uses 1 and up)
                 for (const change of stored.log.filter((logged) => logged.revision > from)) {

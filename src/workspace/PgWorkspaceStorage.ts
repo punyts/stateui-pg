@@ -1,15 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { isAppId } from '@punyts/stateui-mcp';
-import type { AppFolderStore, ServicesStorage } from '@punyts/stateui-mcp';
-import type { Database } from '../db/Database.js';
+import { isAppId, NamespaceUiInstanceRepository, userStateAddress } from '@punyts/stateui-mcp';
+import type { AppFolderStore, InstanceNamespaceStore, ServicesStorage, UiInstanceRepository } from '@punyts/stateui-mcp';
+import type { Database, Queryable } from '../db/Database.js';
 import { enqueueEmbedding } from '../embeddings/EmbeddingIndex.js';
 import { PART_SOURCE } from '../embeddings/partText.js';
-import { queuePersonaRecordChanges, queueRecordChanges } from '../embeddings/records.js';
+import { queueNamespaceRecordChanges, queueRecordChanges } from '../embeddings/records.js';
+import { PgEpochStorage } from '../state/PgDirectory.js';
 import { PgPartRepository } from './PgPartRepository.js';
 import { PgUiErrorLog } from './PgUiErrorLog.js';
 import { PgUiFileRepository } from './PgUiFileRepository.js';
 import { PgUiFileStore } from './PgUiFileStore.js';
-import { PgUiInstanceRepository } from './PgUiInstanceRepository.js';
 import { lockKey, workspaceDb } from './WorkspaceDb.js';
 import type { WorkspaceDb } from './WorkspaceDb.js';
 
@@ -20,6 +20,14 @@ export interface PgWorkspaceStorageOptions {
     readonly embedParts?: boolean;
     /** Queues the embedding of every record field a model marks `embed: true` when it changes, in datasets and persona bindings */
     readonly embedRecords?: boolean;
+    /**
+     * Where the instances are kept as stored namespaces (docs/design/statenet-network.md, "An instance is a stored
+     * namespace"): a server gives its way to the aggregate. By default this workspace's own `pgInstanceNamespaces`,
+     * which writes the rows itself
+     */
+    readonly namespaces?: InstanceNamespaceStore;
+    /** The owner epoch this server holds an instance's address under, when several servers share the database */
+    readonly epochOf?: (address: string) => number | undefined;
     /** Announces every change of a part to the other servers on the database, as this server (`listenToPartChanges`) */
     readonly announceAs?: string;
 }
@@ -42,6 +50,25 @@ class PgAppFolderStore implements AppFolderStore {
 }
 
 /**
+ * The stored namespaces of people's state in Postgres: `PgEpochStorage` (a row per top-level key and per record, the
+ * epoch fence), which can remove one, and with `embedRecords` queues the embeddings of the records a save changes in
+ * the save's transaction. `workspaceOf` names the workspace of an address, for row-level security. This is what an
+ * aggregate writes with
+ */
+export function pgInstanceNamespaces(db: Database, workspaceOf: (address: string) => string, options: { readonly embedRecords?: boolean } = {}): InstanceNamespaceStore {
+    return new PgEpochStorage(db, workspaceOf, 1000, options.embedRecords === true ? queueNamespaceRecordChanges : undefined);
+}
+
+/**
+ * One persona's instances of a workspace, read and written inside a transaction that is already open (an import, a
+ * test's arrangement): each write is part of it, and nothing is queued for embedding
+ */
+export function txInstances(tx: Queryable, workspaceId: string, persona: string): UiInstanceRepository {
+    const within = { transaction: ((work: (inner: Queryable) => Promise<unknown>) => work(tx)) as Database['transaction'] };
+    return new NamespaceUiInstanceRepository(new PgEpochStorage(within, () => workspaceId), (appId) => userStateAddress(workspaceId, persona, appId));
+}
+
+/**
  * One workspace's storage in Postgres, for `createServices({ storage })`: its parts, the instances of each persona,
  * uploaded files and their bytes, preview errors, and what goes with an app when it is deleted. Every adapter is made
  * for this workspace and sets it on each transaction, so row-level security shows nothing of any other
@@ -60,10 +87,11 @@ export function pgWorkspaceStorage(db: Database, workspaceId: string, options: P
             }
         })
     });
+    const namespaces = options.namespaces ?? pgInstanceNamespaces(db, () => workspaceId, { embedRecords: options.embedRecords === true });
     return {
         parts,
         importPart: (part) => parts.put(part),
-        instances: (persona) => new PgUiInstanceRepository(workspace, persona, options.embedRecords === true ? queuePersonaRecordChanges : undefined),
+        instances: (persona) => new NamespaceUiInstanceRepository(namespaces, (appId) => userStateAddress(workspaceId, persona, appId), options.epochOf),
         files: new PgUiFileRepository(workspace, now),
         fileStore: new PgUiFileStore(workspace),
         errorLog: new PgUiErrorLog(workspace),

@@ -43,7 +43,7 @@ async function* bytesOf(text: string): AsyncIterable<Uint8Array> {
     yield new TextEncoder().encode(text);
 }
 
-describe('PgUiInstanceRepository', () => {
+describe('instances', () => {
     it("should keep each persona's diff over the definition, in key order, and drop it when it is empty", async () => {
         // Arrange
         const app = await appOf(alice, 'counter');

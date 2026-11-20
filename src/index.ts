@@ -3,12 +3,11 @@ export type { Database, DatabaseOptions, Queryable, TransactionOptions } from '.
 export { assertMigrated, grantAppRole, migrate, pendingMigrations, readMigrations } from './db/migrate.js';
 export type { Migration, MigrationSet } from './db/migrate.js';
 export { STATEUI_PG_MIGRATIONS } from './migrations.js';
-export { pgWorkspaceStorage } from './workspace/PgWorkspaceStorage.js';
+export { pgInstanceNamespaces, pgWorkspaceStorage, txInstances } from './workspace/PgWorkspaceStorage.js';
 export type { PgWorkspaceStorageOptions } from './workspace/PgWorkspaceStorage.js';
 export { PgPartRepository } from './workspace/PgPartRepository.js';
 export { listenToPartChanges, PART_CHANNEL } from './workspace/PgPartChanges.js';
 export type { PartChanges, PartChangesOptions, PartNotice } from './workspace/PgPartChanges.js';
-export { PgUiInstanceRepository } from './workspace/PgUiInstanceRepository.js';
 export { PgUiFileRepository } from './workspace/PgUiFileRepository.js';
 export { PgUiFileStore } from './workspace/PgUiFileStore.js';
 export { PgUiErrorLog } from './workspace/PgUiErrorLog.js';
@@ -21,11 +20,10 @@ export type { EmbeddingHit, EmbeddingJob, EmbeddingSearch, EmbeddingSource, Sour
 export { PART_SOURCE, partSearchText, partSource } from './embeddings/partText.js';
 export { CatalogEmbeddings, CLOSE_SCORES, DEFAULT_CLOSE_SCORE } from './embeddings/CatalogEmbeddings.js';
 export type { CatalogEntryText, CatalogRanking } from './embeddings/CatalogEmbeddings.js';
-export { changedRecordFields, embeddedFields, PERSONA_RECORD_SOURCE, personaRecordSource, queueAllRecords, queuePersonaRecordChanges, queueRecordChanges, RECORD_SOURCE, recordSource } from './embeddings/records.js';
+export { changedRecordFields, embeddedFields, PERSONA_RECORD_SOURCE, personaRecordSource, queueAllRecords, queueNamespaceRecordChanges, queueRecordChanges, RECORD_SOURCE, recordSource } from './embeddings/records.js';
 export { RecordSimilarity } from './embeddings/RecordSimilarity.js';
 export type { SimilarAnswer, SimilarPlace, SimilarRecord, SimilarRequest } from './embeddings/RecordSimilarity.js';
 export type { PartChange } from './workspace/PgPartRepository.js';
-export type { PersonaDataWrite } from './workspace/PgUiInstanceRepository.js';
 export { PgStateStore, splitUserState } from './state/PgStateStore.js';
 export type { StatePlace, StateRead, StateWriteOptions } from './state/PgStateStore.js';
 export { PgDirectory, PgEpochStorage, PgOwnershipStore } from './state/PgDirectory.js';
