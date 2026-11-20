@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { isAppId, NamespaceUiInstanceRepository, userStateAddress } from '@punyts/stateui-mcp';
-import type { AppFolderStore, InstanceNamespaceStore, ServicesStorage, UiInstanceRepository } from '@punyts/stateui-mcp';
+import type { AppFolderStore, InstanceNamespaceStore, OwnerNames, ServicesStorage, UiInstanceRepository } from '@punyts/stateui-mcp';
 import type { Database, Queryable } from '../db/Database.js';
 import { enqueueEmbedding } from '../embeddings/EmbeddingIndex.js';
 import { PART_SOURCE } from '../embeddings/partText.js';
@@ -26,6 +26,8 @@ export interface PgWorkspaceStorageOptions {
      * which writes the rows itself
      */
     readonly namespaces?: InstanceNamespaceStore;
+    /** The names owners go by in the addresses of their state (their numbers, where a statenet issues them); their ids by default */
+    readonly owners?: OwnerNames;
     /** The owner epoch this server holds an instance's address under, when several servers share the database */
     readonly epochOf?: (address: string) => number | undefined;
     /** Announces every change of a part to the other servers on the database, as this server (`listenToPartChanges`) */
@@ -63,9 +65,9 @@ export function pgInstanceNamespaces(db: Database, workspaceOf: (address: string
  * One persona's instances of a workspace, read and written inside a transaction that is already open (an import, a
  * test's arrangement): each write is part of it, and nothing is queued for embedding
  */
-export function txInstances(tx: Queryable, workspaceId: string, persona: string): UiInstanceRepository {
+export function txInstances(tx: Queryable, workspaceId: string, persona: string, owners?: OwnerNames): UiInstanceRepository {
     const within = { transaction: ((work: (inner: Queryable) => Promise<unknown>) => work(tx)) as Database['transaction'] };
-    return new NamespaceUiInstanceRepository(new PgEpochStorage(within, () => workspaceId), (appId) => userStateAddress(workspaceId, persona, appId));
+    return new NamespaceUiInstanceRepository(new PgEpochStorage(within, () => workspaceId), (appId) => userStateAddress(workspaceId, persona, appId, owners));
 }
 
 /**
@@ -91,7 +93,7 @@ export function pgWorkspaceStorage(db: Database, workspaceId: string, options: P
     return {
         parts,
         importPart: (part) => parts.put(part),
-        instances: (persona) => new NamespaceUiInstanceRepository(namespaces, (appId) => userStateAddress(workspaceId, persona, appId), options.epochOf),
+        instances: (persona) => new NamespaceUiInstanceRepository(namespaces, (appId) => userStateAddress(workspaceId, persona, appId, options.owners), options.epochOf),
         files: new PgUiFileRepository(workspace, now),
         fileStore: new PgUiFileStore(workspace),
         errorLog: new PgUiErrorLog(workspace),

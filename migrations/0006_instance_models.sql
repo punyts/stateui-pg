@@ -2,6 +2,12 @@
 -- of each persona binding moves from beside the binding's row (its value) into the namespace's own state, as the key
 -- `models`: { <binding>: <model> }. The binding rows keep their values until the instance is next saved, so a server
 -- from before this migration still reads what it wrote, and running this again changes nothing.
+--
+-- Row-level security holds the tables' owner too (FORCE), and a migration sets no workspace, so the owner is let
+-- through for this transaction only and held again before it ends.
+
+ALTER TABLE state_node NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE namespace_head NO FORCE ROW LEVEL SECURITY;
 
 INSERT INTO state_node (workspace_id, address, path, parent, position, kind, value, revision, epoch)
 SELECT bound.workspace_id, bound.address, 'models', '',
@@ -15,3 +21,6 @@ SELECT bound.workspace_id, bound.address, 'models', '',
        ) bound
   JOIN namespace_head head ON head.address = bound.address
 ON CONFLICT (address, path) DO NOTHING;
+
+ALTER TABLE state_node FORCE ROW LEVEL SECURITY;
+ALTER TABLE namespace_head FORCE ROW LEVEL SECURITY;

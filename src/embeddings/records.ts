@@ -1,4 +1,3 @@
-import { userStateAddress } from '@punyts/stateui-mcp';
 import type { Queryable } from '../db/Database.js';
 import { enqueueEmbedding } from './EmbeddingIndex.js';
 import type { EmbeddingSource } from './EmbeddingIndex.js';
@@ -135,9 +134,10 @@ export const recordSource: EmbeddingSource = async (tx, job) => {
 
 /** The text of a persona record's field while its model still embeds the field, as the persona's own */
 export const personaRecordSource: EmbeddingSource = async (tx, job) => {
-    const [owner, appId, scope, binding, key] = segments(job.sourceId, 5) ?? [];
-    if (owner === undefined || appId === undefined || scope !== 'user' || binding === undefined || key === undefined) return undefined;
-    const address = `${owner}/${appId}/${scope}`;
+    // `<owner>/apps/<appId>`, the person's state of the app, then the binding and the record's key
+    const [owner, branch, appId, binding, key] = segments(job.sourceId, 5) ?? [];
+    if (owner === undefined || appId === undefined || branch !== 'apps' || binding === undefined || key === undefined) return undefined;
+    const address = `${owner}/${branch}/${appId}`;
     const model = (await tx.query<{ value: Record<string, unknown> | null }>("SELECT value FROM state_node WHERE address = $1 AND path = 'models' AND kind = 'value'", [address])).rows[0]?.value?.[binding];
     if (typeof model !== 'string' || !embeddedFields(await modelBody(tx, job.workspaceId, model)).includes(job.field)) return undefined;
     const record = (await tx.query<{ value: Json }>("SELECT value FROM state_node WHERE address = $1 AND path = $2 AND kind = 'value'", [address, `data.${binding}.${key}`])).rows[0]?.value;

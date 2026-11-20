@@ -13,7 +13,7 @@ import { PgStateStore } from './PgStateStore.js';
 
 const WORKSPACE = 'e0000000-0000-4000-8000-000000000005';
 const APP = 'f0000000-0000-4000-8000-000000000006';
-const ADDRESS = `${WORKSPACE}/${APP}/user`;
+const ADDRESS = `${WORKSPACE}/apps/${APP}`;
 
 let test: TestDatabase;
 const store = new PgStateStore();
@@ -105,8 +105,8 @@ describe('instances as stored namespaces on state_node', () => {
         // Assert
         expect((await repository.get(app)).value).toEqual({ screens: { home: { x: 1 } }, data: { draft: 'hi' } });
         expect(JSON.stringify((await repository.getData(app, 'notes')).value)).toBe(JSON.stringify({ model: 'note', records: { b: { text: 'two' }, a: { text: 'one' } } }));
-        const addresses = (await test.db.query<{ address: string }>('SELECT DISTINCT address FROM state_node WHERE address LIKE $1', [`%/${app}/user`])).rows.map((row) => row.address);
-        expect(addresses).toEqual([`u1/${app}/user`]);
+        const addresses = (await test.db.query<{ address: string }>('SELECT DISTINCT address FROM state_node WHERE address LIKE $1', [`%/apps/${app}`])).rows.map((row) => row.address);
+        expect(addresses).toEqual([`u1/apps/${app}`]);
     });
 
     it('should refuse a save under an older epoch than the instance was last saved under, and take a newer one', async () => {
@@ -125,7 +125,7 @@ describe('instances as stored namespaces on state_node', () => {
 
         // Assert
         expect((await repository.get(app)).value).toEqual({ screens: { home: { x: 3 } } });
-        const head = (await test.db.query<{ epoch: string }>('SELECT epoch FROM namespace_head WHERE address = $1', [`u2/${app}/user`])).rows[0];
+        const head = (await test.db.query<{ epoch: string }>('SELECT epoch FROM namespace_head WHERE address = $1', [`u2/apps/${app}`])).rows[0];
         expect(Number(head?.epoch)).toBe(3);
     });
 });
@@ -146,7 +146,7 @@ describe('0004_state', () => {
 
             // Assert
             const mine = await older.db.transaction((tx) => store.read(tx, ADDRESS), { workspaceIds: [WORKSPACE] });
-            const theirs = await older.db.transaction((tx) => store.read(tx, `u2/${APP}/user`), { workspaceIds: [WORKSPACE] });
+            const theirs = await older.db.transaction((tx) => store.read(tx, `u2/apps/${APP}`), { workspaceIds: [WORKSPACE] });
             expect(JSON.stringify(mine.value)).toBe('{"route":{"screen":"b"},"theme":{"x":1}}');
             // 0006 then puts the binding's model into the namespace's own state, after its other keys
             expect(JSON.stringify(theirs.value)).toBe('{"data":{"bag":{"k2":{"q":2},"k1":{"q":1}}},"models":{"bag":"line"}}');
@@ -156,7 +156,7 @@ describe('0004_state', () => {
             expect(JSON.stringify((await migrated.getData(APP, 'bag')).value)).toBe('{"model":"line","records":{"k2":{"q":2},"k1":{"q":1}}}');
             // a save after the migration leaves the binding's row without the model it used to keep
             await migrated.writeData(APP, 'bag', { model: 'line', records: { k2: { q: 2 }, k1: { q: 1 }, k3: { q: 3 } } } as never);
-            const saved = await older.db.transaction((tx) => store.read(tx, `u2/${APP}/user`), { workspaceIds: [WORKSPACE] });
+            const saved = await older.db.transaction((tx) => store.read(tx, `u2/apps/${APP}`), { workspaceIds: [WORKSPACE] });
             expect(JSON.stringify(saved.value)).toBe('{"data":{"bag":{"k2":{"q":2},"k1":{"q":1},"k3":{"q":3}}},"models":{"bag":"line"}}');
             expect(saved.meta.get('data.bag')).toBeUndefined();
             const head = (await older.db.query<{ updated_at: Date }>('SELECT updated_at FROM namespace_head WHERE address = $1', [ADDRESS])).rows[0];
@@ -165,6 +165,60 @@ describe('0004_state', () => {
         } finally {
             await older.drop();
             await rm(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe('0006_instance_models and 0007_owner_tree_addresses', () => {
+    it("should run as the tables' owner, whom row-level security holds, and move every stored instance to `models` and its place in its owner's tree", async () => {
+        // Arrange: an instance as it was stored before both, in a schema whose tables a plain role owns
+        const older = await createTestDatabase([STATEUI_PG_MIGRATIONS]);
+        const owner = 'punyts_state_migration_owner';
+        const app = '10000000-0000-4000-8000-000000000009';
+        const was = `u9/${app}/user`;
+        try {
+            await older.db.transaction(
+                async (tx) => {
+                    await tx.query('INSERT INTO namespace_head (address, workspace_id, revision, epoch) VALUES ($1, $2, 4, 2)', [was, WORKSPACE]);
+                    const row = 'INSERT INTO state_node (workspace_id, address, path, parent, position, kind, value, revision, epoch) VALUES ($1, $2, $3, $4, $5, $6, $7, 4, 2)';
+                    await tx.query(row, [WORKSPACE, was, 'route', '', 1, 'value', JSON.stringify({ screen: 'b' })]);
+                    await tx.query(row, [WORKSPACE, was, 'data', '', 2, 'object', null]);
+                    await tx.query(row, [WORKSPACE, was, 'data.bag', 'data', 1, 'object', JSON.stringify({ model: 'line' })]);
+                    await tx.query(row, [WORKSPACE, was, 'data.bag.k1', 'data.bag', 1, 'value', JSON.stringify({ q: 1 })]);
+                    await tx.query('DELETE FROM state_node WHERE address = $1 AND path = $2', [was, 'models']);
+                    await tx.query("INSERT INTO embedding_job (workspace_id, source_kind, source_id, field) VALUES ($1, 'persona-record', $2, 'note'), ($1, 'record', 'd1/user/k', 'note')", [WORKSPACE, `${was}/bag/k1/x`]);
+                    await tx.query('INSERT INTO namespace_owner (address, node, epoch, lease_until) VALUES ($1, $2, 2, now())', [was, 'n1']);
+                },
+                { workspaceIds: [WORKSPACE] }
+            );
+            await older.db.query(`DO $$ BEGIN CREATE ROLE ${owner} NOLOGIN NOSUPERUSER NOBYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
+            await older.db.query(`GRANT USAGE ON SCHEMA ${older.schema} TO ${owner}`);
+            for (const table of ['state_node', 'state_change', 'namespace_head', 'namespace_owner', 'embedding', 'embedding_job']) await older.db.query(`ALTER TABLE ${table} OWNER TO ${owner}`);
+            const read = async (name: string): Promise<string> => (await import('node:fs/promises')).readFile(join(STATEUI_PG_MIGRATIONS.dir, name), 'utf8');
+
+            // Act: both, twice over
+            for (const name of ['0006_instance_models.sql', '0007_owner_tree_addresses.sql', '0006_instance_models.sql', '0007_owner_tree_addresses.sql']) {
+                const sql = await read(name);
+                await older.db.transaction(async (tx) => {
+                    await tx.query(`SET LOCAL ROLE ${owner}`);
+                    await tx.query(sql);
+                });
+            }
+
+            // Assert
+            const now = `u9/apps/${app}`;
+            const state = await older.db.transaction((tx) => store.read(tx, now), { workspaceIds: [WORKSPACE] });
+            expect(JSON.stringify(state.value)).toBe('{"route":{"screen":"b"},"data":{"bag":{"k1":{"q":1}}},"models":{"bag":"line"}}');
+            expect((await older.db.transaction((tx) => store.read(tx, was), { workspaceIds: [WORKSPACE] })).value).toBeUndefined();
+            expect(JSON.stringify((await pgWorkspaceStorage(older.db, WORKSPACE).instances('u9').getData(app, 'bag')).value)).toBe('{"model":"line","records":{"k1":{"q":1}}}');
+            expect((await older.db.query<{ address: string }>('SELECT address FROM namespace_owner')).rows).toEqual([{ address: now }]);
+            const jobs = (await older.db.transaction((tx) => tx.query<{ source_id: string }>('SELECT source_id FROM embedding_job ORDER BY source_id'), { workspaceIds: [WORKSPACE] })).rows.map((job) => job.source_id);
+            expect(jobs).toEqual(['d1/user/k', `${now}/bag/k1/x`]);
+            const forced = (await older.db.query<{ relname: string }>("SELECT relname FROM pg_class WHERE relnamespace = current_schema()::regnamespace AND relforcerowsecurity ORDER BY relname")).rows.map((row) => row.relname);
+            expect(forced).toEqual(expect.arrayContaining(['embedding', 'namespace_head', 'state_change', 'state_node']));
+        } finally {
+            await older.db.query(`REASSIGN OWNED BY ${owner} TO CURRENT_USER`).catch(() => undefined);
+            await older.drop();
         }
     });
 });

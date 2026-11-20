@@ -1,4 +1,5 @@
 import { userStateAddress } from '@punyts/stateui-mcp';
+import type { OwnerNames } from '@punyts/stateui-mcp';
 import type { UiPartRepository } from '@punyts/stateui-mcp';
 import type { EmbeddingIndex } from './EmbeddingIndex.js';
 import { embeddedFields, PERSONA_RECORD_SOURCE, RECORD_SOURCE } from './records.js';
@@ -38,7 +39,11 @@ const isObject = (value: unknown): value is Record<string, unknown> => typeof va
  * app reads the records as usual. A record written moments ago is found once the worker has embedded it
  */
 export class RecordSimilarity {
-    constructor(private readonly index: EmbeddingIndex) {}
+    constructor(
+        private readonly index: EmbeddingIndex,
+        /** The names owners go by in the addresses of their state; their ids by default */
+        private readonly owners?: OwnerNames
+    ) {}
 
     async similar(place: SimilarPlace, request: SimilarRequest): Promise<SimilarAnswer> {
         if (typeof request.text !== 'string' || request.text.trim() === '') return { kind: 'refused', reason: 'similar needs a text to compare with' };
@@ -59,7 +64,7 @@ export class RecordSimilarity {
             const refusal = await this.refusal(place, binding['model'], request.field);
             if (refusal !== undefined) return { kind: 'refused', reason: refusal };
             // The persona's own state of the app, where its records are
-            return this.search(place.workspaceId, PERSONA_RECORD_SOURCE, `${userStateAddress(place.workspaceId, place.persona, place.appId)}/${request.binding}/`, request, limit);
+            return this.search(place.workspaceId, PERSONA_RECORD_SOURCE, `${userStateAddress(place.workspaceId, place.persona, place.appId, this.owners)}/${request.binding}/`, request, limit);
         }
         return { kind: 'refused', reason: `the data binding "${request.binding}" is neither a dataset nor a persona binding` };
     }
