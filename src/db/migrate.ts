@@ -91,13 +91,11 @@ export async function assertMigrated(db: Database, sets: readonly MigrationSet[]
     }
 }
 
-/**
- * Lets `role` use the tables the migrations made in the current schema: read and write rows, use the sequences and
- * call the functions, and nothing more. A server connects as such a role, not as the owner, so it cannot change the
- * schema; and a role without superuser or `BYPASSRLS` is held by row-level security. The role must exist (it has a
- * password, which stays out of the migrations). Safe to run again; run it after every `migrate`, for new tables
- */
-export async function grantAppRole(db: Database, role: string): Promise<void> {
+/** The tables that hold people's state; one writer may change them (docs/design/statenet-network.md, S11) */
+export const STATE_TABLES = ['state_node', 'state_change', 'namespace_head'] as const;
+
+/** The role's schema, checked: it exists, and row-level security holds it */
+async function heldRole(db: Database, role: string): Promise<string> {
     if (!/^[a-z_][a-z0-9_]{0,62}$/.test(role)) throw new Error(`A role name is lower-case letters, digits and _: ${role}`);
     const { rows } = await db.query<{ schema: string; exists: boolean; bypasses: boolean }>(
         'SELECT current_schema() AS schema, EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1) AS exists, EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1 AND (rolsuper OR rolbypassrls)) AS bypasses',
@@ -106,11 +104,40 @@ export async function grantAppRole(db: Database, role: string): Promise<void> {
     const { schema, exists, bypasses } = rows[0] as { schema: string; exists: boolean; bypasses: boolean };
     if (!exists) throw new Error(`No role ${role}: create it first, with a password and without superuser or BYPASSRLS`);
     if (bypasses) throw new Error(`The role ${role} is a superuser or has BYPASSRLS, so row-level security would not hold it`);
-    const quoted = `"${schema.replace(/"/g, '""')}"`;
+    return `"${schema.replace(/"/g, '""')}"`;
+}
+
+/**
+ * Lets `role` use the tables the migrations made in the current schema: read and write rows, use the sequences and
+ * call the functions, and nothing more. A server connects as such a role, not as the owner, so it cannot change the
+ * schema; and a role without superuser or `BYPASSRLS` is held by row-level security. With `readOnlyState` it only
+ * reads the state tables, which an aggregate writes (`grantAggregateRole`). The role must exist (it has a password,
+ * which stays out of the migrations). Safe to run again; run it after every `migrate`, for new tables
+ */
+export async function grantAppRole(db: Database, role: string, options: { readonly readOnlyState?: boolean } = {}): Promise<void> {
+    const schema = await heldRole(db, role);
     await db.transaction(async (tx) => {
-        await tx.query(`GRANT USAGE ON SCHEMA ${quoted} TO ${role}`);
-        await tx.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${quoted} TO ${role}`);
-        await tx.query(`GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA ${quoted} TO ${role}`);
-        await tx.query(`GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA ${quoted} TO ${role}`);
+        await tx.query(`GRANT USAGE ON SCHEMA ${schema} TO ${role}`);
+        await tx.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${schema} TO ${role}`);
+        await tx.query(`GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA ${schema} TO ${role}`);
+        await tx.query(`GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA ${schema} TO ${role}`);
+        if (options.readOnlyState === true) for (const table of STATE_TABLES) await tx.query(`REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ${schema}.${table} FROM ${role}`);
+    });
+}
+
+/**
+ * Lets `role`, an aggregate's (docs/design/statenet-network.md, S11), write people's state: every right on the state
+ * tables, adding embedding jobs for the records a save changes, reading the parts those name and the directory, and
+ * reading `reads` besides (the host's own tables it needs). Nothing else. Safe to run again
+ */
+export async function grantAggregateRole(db: Database, role: string, reads: readonly string[] = []): Promise<void> {
+    const schema = await heldRole(db, role);
+    for (const table of reads) if (!/^[a-z_][a-z0-9_]{0,62}$/.test(table)) throw new Error(`A table name is lower-case letters, digits and _: ${table}`);
+    await db.transaction(async (tx) => {
+        await tx.query(`GRANT USAGE ON SCHEMA ${schema} TO ${role}`);
+        for (const table of STATE_TABLES) await tx.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ${schema}.${table} TO ${role}`);
+        await tx.query(`GRANT SELECT, INSERT ON ${schema}.embedding_job TO ${role}`);
+        await tx.query(`GRANT USAGE ON SEQUENCE ${schema}.embedding_job_id_seq TO ${role}`);
+        for (const table of ['part', 'statenet_node', ...reads]) await tx.query(`GRANT SELECT ON ${schema}.${table} TO ${role}`);
     });
 }

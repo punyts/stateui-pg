@@ -61,6 +61,22 @@ describe('PgDirectory', () => {
         expect((await directory.nodes()).map((node) => node.id)).toEqual(['node-a']);
         expect(await directory.heartbeat('node-b')).toBe(false);
     });
+
+    it("should keep a node's group, and list none for a node without one", async () => {
+        // Arrange
+        const directory = new PgDirectory(test.db);
+        await test.db.query('DELETE FROM statenet_node');
+
+        // Act
+        await directory.register({ id: 'node-g', role: 'owner', group: 'magnetic', parent: 'relay-1' });
+        await directory.register({ id: 'node-h', role: 'owner' });
+
+        // Assert
+        expect((await directory.nodes()).map((node) => [node.id, node.group, node.parent])).toEqual([
+            ['node-g', 'magnetic', 'relay-1'],
+            ['node-h', undefined, undefined]
+        ]);
+    });
 });
 
 describe('PgEpochStorage', () => {

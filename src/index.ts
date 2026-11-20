@@ -1,6 +1,6 @@
 export { createDatabase, isUniqueViolation } from './db/Database.js';
 export type { Database, DatabaseOptions, Queryable, TransactionOptions } from './db/Database.js';
-export { assertMigrated, grantAppRole, migrate, pendingMigrations, readMigrations } from './db/migrate.js';
+export { assertMigrated, grantAggregateRole, grantAppRole, migrate, pendingMigrations, readMigrations, STATE_TABLES } from './db/migrate.js';
 export type { Migration, MigrationSet } from './db/migrate.js';
 export { STATEUI_PG_MIGRATIONS } from './migrations.js';
 export { pgInstanceNamespaces, pgWorkspaceStorage, txInstances } from './workspace/PgWorkspaceStorage.js';

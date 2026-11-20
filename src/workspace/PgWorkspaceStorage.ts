@@ -57,7 +57,7 @@ class PgAppFolderStore implements AppFolderStore {
  * the save's transaction. `workspaceOf` names the workspace of an address, for row-level security. This is what an
  * aggregate writes with
  */
-export function pgInstanceNamespaces(db: Database, workspaceOf: (address: string) => string, options: { readonly embedRecords?: boolean } = {}): InstanceNamespaceStore {
+export function pgInstanceNamespaces(db: Database, workspaceOf: (address: string) => string | Promise<string>, options: { readonly embedRecords?: boolean } = {}): InstanceNamespaceStore {
     return new PgEpochStorage(db, workspaceOf, 1000, options.embedRecords === true ? queueNamespaceRecordChanges : undefined);
 }
 

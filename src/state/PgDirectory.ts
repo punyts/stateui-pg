@@ -54,6 +54,8 @@ export interface DirectoryNode {
     readonly endpoint?: string;
     readonly publicKey?: string;
     readonly parent?: string;
+    /** The nodes that run together (docs/design/statenet-network.md, "Groups"); '' or none for a node with none */
+    readonly group?: string;
     readonly capacity?: number;
     readonly protocol?: number;
 }
@@ -68,10 +70,10 @@ export class PgDirectory {
 
     async register(node: DirectoryNode): Promise<void> {
         await this.db.query(
-            `INSERT INTO statenet_node (id, role, region, endpoint, public_key, parent, capacity, protocol) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            `INSERT INTO statenet_node (id, role, region, endpoint, public_key, parent, capacity, protocol, group_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, region = EXCLUDED.region, endpoint = EXCLUDED.endpoint, public_key = EXCLUDED.public_key, parent = EXCLUDED.parent,
-                 capacity = EXCLUDED.capacity, protocol = EXCLUDED.protocol, started_at = now(), heartbeat_at = now()`,
-            [node.id, node.role, node.region ?? '', node.endpoint ?? '', node.publicKey ?? '', node.parent ?? null, node.capacity ?? 0, node.protocol ?? 1]
+                 capacity = EXCLUDED.capacity, protocol = EXCLUDED.protocol, group_name = EXCLUDED.group_name, started_at = now(), heartbeat_at = now()`,
+            [node.id, node.role, node.region ?? '', node.endpoint ?? '', node.publicKey ?? '', node.parent ?? null, node.capacity ?? 0, node.protocol ?? 1, node.group ?? '']
         );
     }
 
@@ -86,8 +88,8 @@ export class PgDirectory {
     }
 
     async nodes(): Promise<DirectoryNode[]> {
-        const rows = (await this.db.query<{ id: string; role: DirectoryNode['role']; region: string; endpoint: string; public_key: string; parent: string | null; capacity: number; protocol: number }>('SELECT id, role, region, endpoint, public_key, parent, capacity, protocol FROM statenet_node ORDER BY id')).rows;
-        return rows.map((row) => ({ id: row.id, role: row.role, region: row.region, endpoint: row.endpoint, publicKey: row.public_key, ...(row.parent !== null && { parent: row.parent }), capacity: row.capacity, protocol: row.protocol }));
+        const rows = (await this.db.query<{ id: string; role: DirectoryNode['role']; region: string; endpoint: string; public_key: string; parent: string | null; capacity: number; protocol: number; group_name: string }>('SELECT id, role, region, endpoint, public_key, parent, capacity, protocol, group_name FROM statenet_node ORDER BY id')).rows;
+        return rows.map((row) => ({ id: row.id, role: row.role, region: row.region, endpoint: row.endpoint, publicKey: row.public_key, ...(row.parent !== null && { parent: row.parent }), capacity: row.capacity, protocol: row.protocol, ...(row.group_name !== '' && { group: row.group_name }) }));
     }
 }
 
@@ -103,7 +105,8 @@ export class PgEpochStorage implements EpochStorage {
     constructor(
         /** The database, or anything that runs work in a transaction (one already open, for a write that is part of it) */
         private readonly db: Pick<Database, 'transaction'>,
-        private readonly workspaceOf: (address: string) => string,
+        /** May read it (the aggregate finds it in the database at each call) */
+        private readonly workspaceOf: (address: string) => string | Promise<string>,
         private readonly logLength = 1000,
         /**
          * Called in the transaction of every save, before the rows change, with what is stored under `read` (top-level
@@ -120,12 +123,12 @@ export class PgEpochStorage implements EpochStorage {
                 if (epoch !== undefined && epoch < current) throw new FencedError(address, epoch, current);
                 await this.store.remove(tx, address);
             },
-            { workspaceIds: [this.workspaceOf(address)] }
+            { workspaceIds: [await this.workspaceOf(address)] }
         );
     }
 
     async load(address: string): Promise<StoredNamespace | undefined> {
-        const workspaceId = this.workspaceOf(address);
+        const workspaceId = await this.workspaceOf(address);
         return this.db.transaction(
             async (tx) => {
                 const head = (await tx.query<{ revision: string | number; applied: StoredNamespace['applied'] }>('SELECT revision, applied FROM namespace_head WHERE address = $1', [address])).rows[0];
@@ -146,7 +149,7 @@ export class PgEpochStorage implements EpochStorage {
     }
 
     async save(address: string, stored: StoredNamespace, epoch: number): Promise<void> {
-        const workspaceId = this.workspaceOf(address);
+        const workspaceId = await this.workspaceOf(address);
         await this.db.transaction(
             async (tx) => {
                 await tx.query('INSERT INTO namespace_head (address, workspace_id) VALUES ($1, $2) ON CONFLICT (address) DO NOTHING', [address, workspaceId]);
