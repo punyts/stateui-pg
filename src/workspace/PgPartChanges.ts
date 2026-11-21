@@ -1,9 +1,13 @@
 import pg from 'pg';
+import { isReported, report } from '@punyts/core';
 import type { PartKind } from '@punyts/stateui-mcp';
 import type { Database } from '../db/Database.js';
 
 /** The channel parts' changes are announced on (`pg_notify`), to every server on the database */
 export const PART_CHANNEL = 'stateui_part';
+
+/** The category of the listener's reports: listening, a notice taken, the connection lost and listening again */
+const CHANGES_CATEGORY = 'stateui-pg.changes';
 
 /** A change of a part another server made: which workspace, which part (by kind and name, the old name of a rename too) */
 export interface PartNotice {
@@ -42,6 +46,7 @@ export async function listenToPartChanges(db: Database, source: string, listener
         try {
             const notice = JSON.parse(message.payload) as { s?: unknown; w?: unknown; k?: unknown; n?: unknown };
             if (notice.s === source || typeof notice.w !== 'string' || typeof notice.k !== 'string' || typeof notice.n !== 'string') return;
+            if (isReported(CHANGES_CATEGORY)) report(CHANGES_CATEGORY, 'Part change heard', { workspaceId: notice.w, kind: notice.k, name: notice.n });
             listener({ workspaceId: notice.w, kind: notice.k as PartKind, name: notice.n });
         } catch {
             // not a notice of ours
@@ -60,6 +65,7 @@ export async function listenToPartChanges(db: Database, source: string, listener
             return;
         }
         client = made;
+        report(CHANGES_CATEGORY, again ? 'Listening to part changes again' : 'Listening to part changes', { channel: PART_CHANNEL });
         if (again) options.onResync?.();
     };
 
@@ -67,10 +73,12 @@ export async function listenToPartChanges(db: Database, source: string, listener
         if (client !== which || closed) return;
         client = undefined;
         options.report?.('The listener of part changes lost its connection; listening again');
+        report(CHANGES_CATEGORY, 'Part changes connection lost', { retryMs: options.retryMs ?? 1000 });
         const retry = (): void => {
             timer = undefined;
             if (closed) return;
             connect(true).catch(() => {
+                report(CHANGES_CATEGORY, 'Part changes not listening yet: retrying', { retryMs: options.retryMs ?? 1000 });
                 timer = setTimeout(retry, options.retryMs ?? 1000);
                 (timer as { unref?: () => void }).unref?.();
             });
@@ -83,6 +91,7 @@ export async function listenToPartChanges(db: Database, source: string, listener
     return {
         close: async () => {
             closed = true;
+            report(CHANGES_CATEGORY, 'Stopped listening to part changes', {});
             if (timer !== undefined) clearTimeout(timer);
             const current = client;
             client = undefined;

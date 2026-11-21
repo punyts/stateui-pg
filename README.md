@@ -15,6 +15,20 @@ Postgres storage for StateUI servers. It holds the pieces every database-backed 
 The design is `docs/design/magnetic-postgres.md` in the workspace. Postgres 16 or later with the `vector` extension
 (`pgvector/pgvector:pg16`).
 
+## Reporting
+
+It reports to `@punyts/core`'s default reporter, off unless a host turns the categories on (`stateui-pg.*`, or
+`PUNYTS_REPORT` in Magnetic and stateui-mcp). A report names statements, tables, ids, counts and durations, never SQL
+parameters or an error's message (only its SQLSTATE).
+
+| Category | Reports |
+|---|---|
+| `stateui-pg.migrate` | the migration lock taken (`ms` waited), how many are pending, a migration applied or failed (`owner`, `version`, `name`, `ms`) |
+| `stateui-pg.query` | a query: `statement` (`SELECT`, `INSERT`, ...), its first `table`, `rows`, `ms`, `inTransaction`; a failed one with its `code` |
+| `stateui-pg.transaction` | a transaction begun, committed (`queries`, `ms`) or rolled back (`code`), with its `workspaceIds` |
+| `stateui-pg.lock` | an advisory lock held: the key's kind (`files`, `errors`) and the `ms` waited |
+| `stateui-pg.changes` | listening to part changes, a change heard (`workspaceId`, `kind`, `name`), the connection lost and listening again |
+
 ## Develop
 
 ```bash

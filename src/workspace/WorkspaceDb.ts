@@ -1,4 +1,6 @@
+import { isReported, report } from '@punyts/core';
 import type { Database, Queryable } from '../db/Database.js';
+import { msSince } from '../db/Database.js';
 
 /** The database as one workspace sees it: every transaction is set to that workspace for row-level security */
 export interface WorkspaceDb {
@@ -11,9 +13,19 @@ export function workspaceDb(db: Database, workspaceId: string): WorkspaceDb {
     return { workspaceId: id, transaction: (work) => db.transaction(work, { workspaceIds: [id] }) };
 }
 
+/** The category of the advisory locks' reports: which kind of key, and how long the wait was */
+const LOCK_CATEGORY = 'stateui-pg.lock';
+
 /** Holds the transaction-scoped advisory lock of a key, such as the files of one app, until the transaction ends */
 export async function lockKey(tx: Queryable, key: string): Promise<void> {
+    if (!isReported(LOCK_CATEGORY)) {
+        await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [key]);
+        return;
+    }
+    const start = performance.now();
     await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [key]);
+    // The key's kind (`files`, `errors`), before the ids it holds
+    report(LOCK_CATEGORY, 'Lock held', { lock: key.split(':')[0], ms: msSince(start) });
 }
 
 /** True when the workspace has an app part with this id */

@@ -1,6 +1,8 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { report } from '@punyts/core';
 import type { Database } from './Database.js';
+import { msSince } from './Database.js';
 
 /** A folder of numbered SQL files with one owner: `0001_people.sql`, `0002_orgs.sql`, ... */
 export interface MigrationSet {
@@ -19,6 +21,7 @@ export interface Migration {
 const FILE = /^(\d{4})_([a-z0-9_]+)\.sql$/;
 /** The advisory lock every migrator takes, so two servers starting at once never migrate together */
 const LOCK = 7_340_271_022;
+const MIGRATE_CATEGORY = 'stateui-pg.migrate';
 
 const CREATE_TABLE = `CREATE TABLE IF NOT EXISTS schema_migration (
     owner text NOT NULL,
@@ -60,11 +63,16 @@ export async function pendingMigrations(db: Database, sets: readonly MigrationSe
 export async function migrate(db: Database, sets: readonly MigrationSet[]): Promise<Migration[]> {
     const client = await db.pool.connect();
     try {
+        const waited = performance.now();
         await client.query('SELECT pg_advisory_lock($1)', [LOCK]);
+        report(MIGRATE_CATEGORY, 'Migration lock taken', { owners: sets.map((set) => set.owner), ms: msSince(waited) });
         await client.query(CREATE_TABLE);
         const applied: Migration[] = [];
-        for (const migration of await pendingMigrations(db, sets)) {
+        const pending = await pendingMigrations(db, sets);
+        report(MIGRATE_CATEGORY, 'Migrations pending', { pending: pending.length });
+        for (const migration of pending) {
             const sql = await readFile(migration.path, 'utf8');
+            const start = performance.now();
             try {
                 await client.query('BEGIN');
                 await client.query(sql);
@@ -72,8 +80,10 @@ export async function migrate(db: Database, sets: readonly MigrationSet[]): Prom
                 await client.query('COMMIT');
             } catch (error) {
                 await client.query('ROLLBACK').catch(() => undefined);
+                report(MIGRATE_CATEGORY, 'Migration failed', { owner: migration.owner, version: migration.version, name: migration.name, ms: msSince(start) });
                 throw new Error(`Migration ${migration.owner} ${migration.version} (${migration.name}) failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
             }
+            report(MIGRATE_CATEGORY, 'Migration applied', { owner: migration.owner, version: migration.version, name: migration.name, ms: msSince(start) });
             applied.push(migration);
         }
         return applied;
