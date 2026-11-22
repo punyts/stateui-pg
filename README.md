@@ -8,6 +8,11 @@ Postgres storage for StateUI servers. It holds the pieces every database-backed 
   owner, each applied in its own transaction and recorded in `schema_migration`. An advisory lock keeps two servers from
   migrating at once. Plain Node, so it runs from cmd, PowerShell and bash.
 - `STATEUI_PG_MIGRATIONS`: this library's own tables (`migrations/`).
+- `grantAppRole(db, role, { readOnlyState })` and `grantAggregateRole(db, role, reads)`: the rights of the role the
+  servers connect as and of the aggregate's. The aggregate's role writes the state tables and, in `statenet_node`,
+  only the rows of relays (restrictive row-level security policies), which it lists while they are linked to it.
+- `PgDirectory`: the statenet's nodes (`register`, `heartbeat`, `remove`, `sweep`, `nodes`), and `PgOwnershipStore`
+  and `PgEpochStorage` for who owns a namespace and its stored state.
 - `@punyts/stateui-pg/testing`: `createTestDatabase(sets)` makes a schema of its own in the test database, with the
   migrations applied, and drops it after. The test database is `PUNYTS_TEST_DATABASE_URL`, or the one `npm run
   magnetic:db` starts in Docker (`postgres://magnetic:magnetic@127.0.0.1:5433/magnetic`).

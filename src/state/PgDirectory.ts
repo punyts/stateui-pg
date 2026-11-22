@@ -82,6 +82,11 @@ export class PgDirectory {
         return ((await this.db.query('UPDATE statenet_node SET heartbeat_at = now() WHERE id = $1', [nodeId])).rowCount ?? 0) === 1;
     }
 
+    /** Takes a node out of the directory at once (a relay whose link to the aggregate closed) */
+    async remove(nodeId: string): Promise<void> {
+        await this.db.query('DELETE FROM statenet_node WHERE id = $1', [nodeId]);
+    }
+
     /** Takes out the nodes whose last heartbeat is older than `staleMs`; answers their ids */
     async sweep(staleMs: number): Promise<string[]> {
         return (await this.db.query<{ id: string }>('DELETE FROM statenet_node WHERE heartbeat_at < now() - make_interval(secs => $1::double precision / 1000) RETURNING id', [staleMs])).rows.map((row) => row.id);

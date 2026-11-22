@@ -67,4 +67,33 @@ describe('the roles of the servers and the aggregate', () => {
         // Assert
         expect(outcomes.map((outcome) => (outcome === 'ok' ? 'ok' : /permission denied/.test(outcome) ? 'denied' : outcome))).toEqual(['ok', 'ok', 'ok', 'ok', 'denied', 'denied']);
     });
+
+    it('should let the aggregate list, heartbeat and remove relays in the directory and no other node, while the server still writes every row', async () => {
+        // Arrange
+        await grantAggregateRole(test.db, 'punyts_aggregate_test');
+        await grantAppRole(test.db, 'punyts_server_test', { readOnlyState: true });
+        await test.db.query(`INSERT INTO statenet_node (id, role) VALUES ('server-1', 'owner') ON CONFLICT (id) DO NOTHING`);
+
+        // Act
+        const outcomes = [
+            await as('punyts_aggregate_test', `INSERT INTO statenet_node (id, role, group_name, parent) VALUES ('relay-1', 'relay', 'shop', 'aggregate-1')`),
+            await as('punyts_aggregate_test', `UPDATE statenet_node SET heartbeat_at = now() WHERE id = 'relay-1'`),
+            await as('punyts_aggregate_test', `SELECT * FROM statenet_node WHERE id = 'server-1'`),
+            await as('punyts_aggregate_test', `INSERT INTO statenet_node (id, role) VALUES ('owner-x', 'owner')`),
+            await as('punyts_aggregate_test', `UPDATE statenet_node SET role = 'owner' WHERE id = 'relay-1'`),
+            await as('punyts_aggregate_test', `DELETE FROM statenet_node WHERE id = 'relay-1'`),
+            await as('punyts_server_test', `UPDATE statenet_node SET heartbeat_at = now() WHERE id = 'server-1'`),
+            await as('punyts_server_test', `INSERT INTO statenet_node (id, role) VALUES ('server-2', 'owner')`)
+        ];
+        const { rows: serverRows } = await test.db.query<{ count: string }>(`SELECT count(*) FROM statenet_node WHERE id = 'server-1'`);
+        await test.db.transaction(async (tx) => {
+            await tx.query('SET LOCAL ROLE punyts_aggregate_test');
+            await tx.query(`DELETE FROM statenet_node WHERE id = 'server-1'`);
+        });
+        const { rows: afterDelete } = await test.db.query<{ count: string }>(`SELECT count(*) FROM statenet_node WHERE id = 'server-1'`);
+
+        // Assert
+        expect(outcomes.map((outcome) => (outcome === 'ok' ? 'ok' : /row-level security/.test(outcome) ? 'refused' : outcome))).toEqual(['ok', 'ok', 'ok', 'refused', 'refused', 'ok', 'ok', 'ok']);
+        expect([serverRows[0]?.count, afterDelete[0]?.count].map(Number)).toEqual([1, 1]);
+    });
 });

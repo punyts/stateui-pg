@@ -137,8 +137,10 @@ export async function grantAppRole(db: Database, role: string, options: { readon
 
 /**
  * Lets `role`, an aggregate's (docs/design/statenet-network.md, S11), write people's state: every right on the state
- * tables, adding embedding jobs for the records a save changes, reading the parts those name and the directory, and
- * reading `reads` besides (the host's own tables it needs). Nothing else. Safe to run again
+ * tables, adding embedding jobs for the records a save changes, reading the parts those name and the directory, listing
+ * the relays linked to it in the directory (docs/design/statenet-relay-directory.md: restrictive policies let it insert,
+ * change and delete only rows of `role = 'relay'`), and reading `reads` besides (the host's own tables it needs).
+ * Nothing else. Safe to run again
  */
 export async function grantAggregateRole(db: Database, role: string, reads: readonly string[] = []): Promise<void> {
     const schema = await heldRole(db, role);
@@ -149,5 +151,16 @@ export async function grantAggregateRole(db: Database, role: string, reads: read
         await tx.query(`GRANT SELECT, INSERT ON ${schema}.embedding_job TO ${role}`);
         await tx.query(`GRANT USAGE ON SEQUENCE ${schema}.embedding_job_id_seq TO ${role}`);
         for (const table of ['part', 'statenet_node', ...reads]) await tx.query(`GRANT SELECT ON ${schema}.${table} TO ${role}`);
+        await tx.query(`GRANT INSERT, UPDATE, DELETE ON ${schema}.statenet_node TO ${role}`);
+        const relayRows = {
+            insert: `WITH CHECK (role = 'relay')`,
+            update: `USING (role = 'relay') WITH CHECK (role = 'relay')`,
+            delete: `USING (role = 'relay')`
+        };
+        for (const [command, rule] of Object.entries(relayRows)) {
+            const policy = `${role}_relays_${command}`;
+            await tx.query(`DROP POLICY IF EXISTS ${policy} ON ${schema}.statenet_node`);
+            await tx.query(`CREATE POLICY ${policy} ON ${schema}.statenet_node AS RESTRICTIVE FOR ${command.toUpperCase()} TO ${role} ${rule}`);
+        }
     });
 }

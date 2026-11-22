@@ -77,6 +77,20 @@ describe('PgDirectory', () => {
             ['node-h', undefined, undefined]
         ]);
     });
+    it('should take a node out at once with remove, and leave the others', async () => {
+        // Arrange
+        const directory = new PgDirectory(test.db);
+        await directory.register({ id: 'relay-gone', role: 'relay', group: 'shop', parent: 'aggregate-1', endpoint: 'wss://relay-gone.example:4310' });
+        await directory.register({ id: 'relay-kept', role: 'relay', parent: 'aggregate-1' });
+
+        // Act
+        await directory.remove('relay-gone');
+        const ids = (await directory.nodes()).map((node) => node.id);
+
+        // Assert
+        expect(ids).toContain('relay-kept');
+        expect(ids).not.toContain('relay-gone');
+    });
 });
 
 describe('PgEpochStorage', () => {
