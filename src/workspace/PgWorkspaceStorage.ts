@@ -97,6 +97,21 @@ export function pgWorkspaceStorage(db: Database, workspaceId: string, options: P
         files: new PgUiFileRepository(workspace, now),
         fileStore: new PgUiFileStore(workspace),
         errorLog: new PgUiErrorLog(workspace),
-        appFolders: new PgAppFolderStore(workspace)
+        appFolders: new PgAppFolderStore(workspace),
+        // Every persona's instance of a deleted app, each namespace whole through the namespace store, at its head's epoch
+        removeApp: async (appId) => {
+            if (!isAppId(appId)) return;
+            const heads = await db.transaction(
+                async (tx) =>
+                    (
+                        await tx.query<{ address: string; epoch: string | number }>(
+                            "SELECT address, epoch FROM namespace_head WHERE workspace_id = $1 AND address = split_part(address, '/', 1) || '/apps/' || $2 ORDER BY address",
+                            [workspaceId, appId.toLowerCase()]
+                        )
+                    ).rows,
+                { workspaceIds: [workspaceId] }
+            );
+            for (const head of heads) await namespaces.remove(head.address, Number(head.epoch));
+        }
     };
 }

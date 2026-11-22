@@ -86,6 +86,25 @@ describe('instances', () => {
         expect((await own.getData(app, 'notes')).value).toBeUndefined();
         expect((await own.get(app)).value).toEqual({});
     });
+
+    it("should remove every persona's instance of an app with removeApp, and keep the other apps'", async () => {
+        // Arrange
+        const app = await appOf(alice, 'shared');
+        const other = await appOf(alice, 'kept');
+        const definition = { route: { screen: 'home' } };
+        const changed = { route: { screen: 'edit' } };
+        await alice.instances('default').write(app, definition, changed);
+        await alice.instances(BOB).write(app, definition, changed);
+        await alice.instances(BOB).write(other, definition, changed);
+
+        // Act
+        await alice.removeApp?.(app);
+
+        // Assert
+        expect((await alice.instances('default').get(app)).value).toEqual({});
+        expect((await alice.instances(BOB).get(app)).value).toEqual({});
+        expect((await alice.instances(BOB).get(other)).value).toEqual(changed);
+    });
 });
 
 describe('Files', () => {
