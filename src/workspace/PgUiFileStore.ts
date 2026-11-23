@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { isAppId } from '@punyts/stateui-mcp';
-import type { SaveFileResult, UiFileStore } from '@punyts/stateui-mcp';
+import type { ByteRange, SaveFileResult, UiFileStore } from '@punyts/stateui-mcp';
 import type { WorkspaceDb } from './WorkspaceDb.js';
 
 const HEAD_BYTES = 4096;
@@ -41,8 +41,9 @@ export class PgUiFileStore implements UiFileStore {
         return { kind: 'saved', size, sha256: hash.digest('hex'), head: new Uint8Array(bytes.subarray(0, Math.min(size, HEAD_BYTES))) };
     }
 
-    async open(appId: string, fileId: string): Promise<Readable | undefined> {
-        const bytes = await this.bytes(appId, fileId);
+    /** A range is cut in the database, so only its bytes are read */
+    async open(appId: string, fileId: string, range?: ByteRange): Promise<Readable | undefined> {
+        const bytes = await this.bytes(appId, fileId, range);
         return bytes === undefined ? undefined : Readable.from([bytes]);
     }
 
@@ -59,10 +60,13 @@ export class PgUiFileStore implements UiFileStore {
         });
     }
 
-    private async bytes(appId: string, fileId: string): Promise<Buffer | undefined> {
+    private async bytes(appId: string, fileId: string, range?: ByteRange): Promise<Buffer | undefined> {
         if (!isAppId(appId) || !isAppId(fileId)) return undefined;
+        const ids = [this.db.workspaceId, appId.toLowerCase(), fileId.toLowerCase()];
+        // `substring` of bytea counts from 1
+        const [select, values] = range === undefined ? ['bytes', ids] : ['substring(bytes from $4 for $5) AS bytes', [...ids, range.start + 1, range.end - range.start + 1]];
         return this.db.transaction(
-            async (tx) => (await tx.query<{ bytes: Buffer }>('SELECT bytes FROM app_file_content WHERE workspace_id = $1 AND app_id = $2 AND file_id = $3', [this.db.workspaceId, appId.toLowerCase(), fileId.toLowerCase()])).rows[0]?.bytes
+            async (tx) => (await tx.query<{ bytes: Buffer }>(`SELECT ${select} FROM app_file_content WHERE workspace_id = $1 AND app_id = $2 AND file_id = $3`, values)).rows[0]?.bytes
         );
     }
 }

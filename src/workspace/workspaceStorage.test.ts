@@ -163,6 +163,28 @@ describe('Files', () => {
         expect(await alice.files.usage(app)).toEqual({ count: 2, bytes: 6 });
     });
 
+    it('should open a range of a file, cut in the database, and the whole file without one', async () => {
+        // Arrange
+        const app = await appOf(alice, 'ranges');
+        const id = 'f0000000-0000-4000-8000-000000000011';
+        await alice.fileStore.save(app, id, bytesOf('0123456789'), 100);
+        const text = async (stream: AsyncIterable<Uint8Array> | undefined): Promise<string | undefined> => {
+            if (stream === undefined) return undefined;
+            const chunks: Uint8Array[] = [];
+            for await (const chunk of stream) chunks.push(chunk);
+            return Buffer.concat(chunks).toString('utf8');
+        };
+
+        // Act
+        const middle = await text(await alice.fileStore.open(app, id, { start: 2, end: 5 }));
+        const last = await text(await alice.fileStore.open(app, id, { start: 9, end: 9 }));
+        const whole = await text(await alice.fileStore.open(app, id));
+        const missing = await alice.fileStore.open(app, 'f0000000-0000-4000-8000-000000000012', { start: 0, end: 1 });
+
+        // Assert
+        expect([middle, last, whole, missing]).toEqual(['2345', '9', '0123456789', undefined]);
+    });
+
     it('should never pass the file quota when two servers add files to one app at once', async () => {
         // Arrange
         const app = await appOf(alice, 'crowded');
