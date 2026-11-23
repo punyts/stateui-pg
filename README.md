@@ -16,6 +16,11 @@ Postgres storage for StateUI servers. It holds the pieces every database-backed 
   serial, applied ids and requests. The pending requests are listed without values in `pending_request` (address, id,
   owner, subject, at, until), a state table, so a server lists what waits for a person without loading namespaces
   (`docs/design/statenet-requests.md`).
+- `pgWorkspaceStorage(db, workspaceId, options)`: one workspace's `ServicesStorage` for `createServices`. A dataset's
+  records live in its namespace `<owner>/data/<dataset>` (rows at `data.records.<key>`), saved through `datasets`; the
+  part keeps the model. `importPart` splits an imported dataset that way, and `txSeedDataset` does it inside a
+  transaction an import already holds. With `embedRecords`, a save of a dataset's namespace queues the record fields its
+  model embeds (source ids `<owner>/data/<dataset>/<key>`), and a model change queues every record of its datasets.
 - `@punyts/stateui-pg/testing`: `createTestDatabase(sets)` makes a schema of its own in the test database, with the
   migrations applied, and drops it after. The test database is `PUNYTS_TEST_DATABASE_URL`, or the one `npm run
   magnetic:db` starts in Docker (`postgres://magnetic:magnetic@127.0.0.1:5433/magnetic`).

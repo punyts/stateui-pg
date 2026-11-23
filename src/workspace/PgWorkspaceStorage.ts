@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { isAppId, NamespaceUiInstanceRepository, userStateAddress } from '@punyts/stateui-mcp';
+import { datasetStateAddress, isAppId, NamespaceUiInstanceRepository, seededDataset, userStateAddress } from '@punyts/stateui-mcp';
 import type { AppFolderStore, InstanceNamespaceStore, OwnerNames, ServicesStorage, UiInstanceRepository } from '@punyts/stateui-mcp';
 import type { Database, Queryable } from '../db/Database.js';
 import { enqueueEmbedding } from '../embeddings/EmbeddingIndex.js';
@@ -71,6 +71,15 @@ export function txInstances(tx: Queryable, workspaceId: string, persona: string,
 }
 
 /**
+ * Saves a dataset's records as its namespace at revision 1 inside a transaction already open on the workspace, for an
+ * import that writes its rows itself (docs/design/statenet-requests.md, R3a)
+ */
+export async function txSeedDataset(tx: Queryable, workspaceId: string, name: string, records: object, owners?: OwnerNames): Promise<void> {
+    const within = { transaction: ((work: (inner: Queryable) => Promise<unknown>) => work(tx)) as Database['transaction'] };
+    await new PgEpochStorage(within, () => workspaceId).save(datasetStateAddress(workspaceId, name, owners), seededDataset(records), 0);
+}
+
+/**
  * One workspace's storage in Postgres, for `createServices({ storage })`: its parts, the instances of each persona,
  * uploaded files and their bytes, preview errors, and what goes with an app when it is deleted. Every adapter is made
  * for this workspace and sets it on each transaction, so row-level security shows nothing of any other
@@ -92,7 +101,18 @@ export function pgWorkspaceStorage(db: Database, workspaceId: string, options: P
     const namespaces = options.namespaces ?? pgInstanceNamespaces(db, () => workspaceId, { embedRecords: options.embedRecords === true });
     return {
         parts,
-        importPart: (part) => parts.put(part),
+        // A dataset's records go in its namespace, the rest of it in the part (docs/design/statenet-requests.md, R3a)
+        importPart: async (part) => {
+            if (part.kind !== 'data') {
+                await parts.put(part);
+                return;
+            }
+            const { records = {}, ...body } = part.body as { records?: object };
+            if (!(await parts.put({ ...part, body: body as typeof part.body }))) return;
+            const address = datasetStateAddress(workspaceId, part.name, options.owners);
+            await namespaces.save(address, seededDataset(records), options.epochOf?.(address) ?? 0);
+        },
+        datasets: namespaces,
         instances: (persona) => new NamespaceUiInstanceRepository(namespaces, (appId) => userStateAddress(workspaceId, persona, appId, options.owners), options.epochOf),
         files: new PgUiFileRepository(workspace, now),
         fileStore: new PgUiFileStore(workspace),

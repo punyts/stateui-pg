@@ -3,7 +3,7 @@ export type { Database, DatabaseOptions, Queryable, TransactionOptions } from '.
 export { assertMigrated, grantAggregateRole, grantAppRole, migrate, pendingMigrations, readMigrations, STATE_TABLES } from './db/migrate.js';
 export type { Migration, MigrationSet } from './db/migrate.js';
 export { STATEUI_PG_MIGRATIONS } from './migrations.js';
-export { pgInstanceNamespaces, pgWorkspaceStorage, txInstances } from './workspace/PgWorkspaceStorage.js';
+export { pgInstanceNamespaces, pgWorkspaceStorage, txInstances, txSeedDataset } from './workspace/PgWorkspaceStorage.js';
 export type { PgWorkspaceStorageOptions } from './workspace/PgWorkspaceStorage.js';
 export { PgPartRepository } from './workspace/PgPartRepository.js';
 export { listenToPartChanges, PART_CHANNEL } from './workspace/PgPartChanges.js';

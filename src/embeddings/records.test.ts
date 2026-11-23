@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { datasetStateAddress, seededDataset } from '@punyts/stateui-mcp';
 import type { ServicesStorage, UiPartBodies } from '@punyts/stateui-mcp';
 import { STATEUI_PG_MIGRATIONS } from '../migrations.js';
 import { createTestDatabase } from '../testing/testDatabase.js';
@@ -11,16 +12,15 @@ import { RecordSimilarity } from './RecordSimilarity.js';
 
 const WORKSPACE = 'c0000000-0000-4000-8000-000000000003';
 const APP = 'd0000000-0000-4000-8000-000000000004';
+/** The tickets dataset's namespace */
+const TICKETS_ADDRESS = datasetStateAddress(WORKSPACE, 'tickets');
 
 const TICKET_MODEL = { fields: { title: { type: 'string', embed: true }, notes: { type: 'string', embed: true }, status: { type: 'string' } } } as unknown as UiPartBodies['models'];
-const TICKETS = {
-    model: 'ticket',
-    records: {
-        t1: { title: 'Printer jams on every page', notes: 'paper stuck in the tray', status: 'open' },
-        t2: { title: 'Password reset email never arrives', notes: 'login account email', status: 'open' },
-        t3: { title: 'Laptop battery drains overnight', notes: 'power battery charge', status: 'closed' }
-    }
-} as unknown as UiPartBodies['data'];
+const TICKET_RECORDS = {
+    t1: { title: 'Printer jams on every page', notes: 'paper stuck in the tray', status: 'open' },
+    t2: { title: 'Password reset email never arrives', notes: 'login account email', status: 'open' },
+    t3: { title: 'Laptop battery drains overnight', notes: 'power battery charge', status: 'closed' }
+};
 const APP_BODY = { uses: { data: { tickets: { dataset: 'tickets' }, mine: { model: 'ticket', scope: 'persona' } } }, start: 'home', screens: { home: { root: { component: 'panel' } } } } as unknown as UiPartBodies['apps'];
 
 let test: TestDatabase;
@@ -38,7 +38,8 @@ beforeAll(async () => {
     index = new EmbeddingIndex(test.db, hashEmbedder(256), { [RECORD_SOURCE]: recordSource, [PERSONA_RECORD_SOURCE]: personaRecordSource });
     similarity = new RecordSimilarity(index);
     await storage.parts.create({ kind: 'models', name: 'ticket', body: TICKET_MODEL });
-    await storage.parts.create({ kind: 'data', name: 'tickets', body: TICKETS });
+    await storage.parts.create({ kind: 'data', name: 'tickets', body: { model: 'ticket' } as unknown as UiPartBodies['data'] });
+    await storage.datasets.save(TICKETS_ADDRESS, seededDataset(TICKET_RECORDS), 0);
     await storage.parts.create({ kind: 'apps', name: 'helpdesk', id: APP, body: APP_BODY });
 });
 
@@ -80,16 +81,16 @@ describe('Record embeddings and similar', () => {
     it('should queue only the record and field an edit changes', async () => {
         // Arrange
         await index.drain();
-        const dataset = await storage.parts.findByName('data', 'tickets');
-        const body = structuredClone(dataset?.body) as unknown as { records: Record<string, Record<string, string>> };
-        (body.records['t2'] as Record<string, string>)['notes'] = 'single sign on';
-        (body.records['t3'] as Record<string, string>)['status'] = 'open';
+        const stored = await storage.datasets.load(TICKETS_ADDRESS);
+        const state = structuredClone(stored?.state) as unknown as { data: { records: Record<string, Record<string, string>> } };
+        (state.data.records['t2'] as Record<string, string>)['notes'] = 'single sign on';
+        (state.data.records['t3'] as Record<string, string>)['status'] = 'open';
 
         // Act
-        await storage.parts.write('data', 'tickets', body as unknown as UiPartBodies['data'], dataset?.revision ?? 0);
+        await storage.datasets.save(TICKETS_ADDRESS, { ...seededDataset(state.data.records), revision: (stored?.revision ?? 0) + 1 }, 0);
 
         // Assert
-        expect(await jobs()).toEqual([{ source_kind: RECORD_SOURCE, source_id: `${dataset?.id}/t2`, field: 'notes' }]);
+        expect(await jobs()).toEqual([{ source_kind: RECORD_SOURCE, source_id: `${TICKETS_ADDRESS}/t2`, field: 'notes' }]);
         await index.drain();
     });
 

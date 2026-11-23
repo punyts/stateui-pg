@@ -219,11 +219,12 @@ export class PgPartRepository implements UiPartRepository {
 
     /**
      * Stores a part exactly as given, without the checks of `create`, for importing parts made elsewhere (the showcase
-     * holds names from before today's rules). A part already there by kind and id, or by kind and name, is left alone
+     * holds names from before today's rules). A part already there by kind and id, or by kind and name, is left alone;
+     * true when the part was stored
      */
-    async put(part: UiPart): Promise<void> {
-        await this.db.transaction(async (tx) => {
-            await tx.query(`INSERT INTO part (workspace_id, ${COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING`, [
+    async put(part: UiPart): Promise<boolean> {
+        return this.db.transaction(async (tx) => {
+            const inserted = await tx.query(`INSERT INTO part (workspace_id, ${COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING`, [
                 this.db.workspaceId,
                 part.id.toLowerCase(),
                 part.kind,
@@ -234,6 +235,7 @@ export class PgPartRepository implements UiPartRepository {
                 part.updatedAt
             ]);
             await this.announce(tx, part.kind, part.name);
+            return (inserted.rowCount ?? 0) > 0;
         });
     }
 

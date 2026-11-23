@@ -1,4 +1,4 @@
-import { userStateAddress } from '@punyts/stateui-mcp';
+import { datasetStateAddress, userStateAddress } from '@punyts/stateui-mcp';
 import type { OwnerNames } from '@punyts/stateui-mcp';
 import type { UiPartRepository } from '@punyts/stateui-mcp';
 import type { EmbeddingIndex } from './EmbeddingIndex.js';
@@ -58,7 +58,7 @@ export class RecordSimilarity {
             if (dataset === undefined) return { kind: 'refused', reason: `the dataset "${binding['dataset']}" is not there` };
             const refusal = await this.refusal(place, (dataset.body as { model?: string }).model, request.field);
             if (refusal !== undefined) return { kind: 'refused', reason: refusal };
-            return this.search(place.workspaceId, RECORD_SOURCE, `${dataset.id}/`, request, limit);
+            return this.search(place.workspaceId, RECORD_SOURCE, `${datasetStateAddress(place.workspaceId, binding['dataset'], this.owners)}/`, request, limit);
         }
         if (binding['scope'] === 'persona' && typeof binding['model'] === 'string') {
             const refusal = await this.refusal(place, binding['model'], request.field);

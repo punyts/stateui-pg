@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { installShowcaseInto, MAX_FILES_PER_APP } from '@punyts/stateui-mcp';
+import { datasetStateAddress, installShowcaseInto, MAX_FILES_PER_APP } from '@punyts/stateui-mcp';
 import type { ServicesStorage } from '@punyts/stateui-mcp';
 import { createDatabase } from '../db/Database.js';
 import type { Database } from '../db/Database.js';
@@ -370,5 +370,24 @@ describe('installShowcaseInto', () => {
         expect(apps.map((app) => app.name)).toContain('component-showcase');
         const showcase = apps.find((app) => app.name === 'component-showcase');
         expect((await fresh.files.list(showcase?.id ?? '')).length).toBeGreaterThan(0);
+    });
+});
+
+describe('importPart', () => {
+    it("should keep an imported dataset's records in its namespace, and import it only once", async () => {
+        // Arrange
+        const fresh = pgWorkspaceStorage(test.db, 'c0000000-0000-4000-8000-0000000000ab');
+        const part = { kind: 'data' as const, id: 'e0000000-0000-4000-8000-0000000000ab', name: 'catalog', revision: 1, createdAt: new Date(), updatedAt: new Date(), body: { model: 'product', records: { p1: { name: 'Lamp' } } } as never };
+
+        // Act
+        await fresh.importPart?.(part);
+        await fresh.importPart?.({ ...part, body: { model: 'product', records: { p2: { name: 'Chair' } } } as never });
+
+        // Assert
+        expect((await fresh.parts.findByName('data', 'catalog'))?.body).toEqual({ model: 'product' });
+        expect(await fresh.datasets.load(datasetStateAddress('c0000000-0000-4000-8000-0000000000ab', 'catalog'))).toMatchObject({
+            revision: 1,
+            state: { data: { records: { p1: { name: 'Lamp' } } } }
+        });
     });
 });
