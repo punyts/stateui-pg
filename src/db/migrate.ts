@@ -102,7 +102,7 @@ export async function assertMigrated(db: Database, sets: readonly MigrationSet[]
 }
 
 /** The tables that hold people's state; one writer may change them (docs/design/statenet-network.md, S11) */
-export const STATE_TABLES = ['state_node', 'state_change', 'namespace_head'] as const;
+export const STATE_TABLES = ['state_node', 'state_change', 'namespace_head', 'pending_request'] as const;
 
 /** The role's schema, checked: it exists, and row-level security holds it */
 async function heldRole(db: Database, role: string): Promise<string> {

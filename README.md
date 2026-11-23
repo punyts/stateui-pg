@@ -12,7 +12,10 @@ Postgres storage for StateUI servers. It holds the pieces every database-backed 
   servers connect as and of the aggregate's. The aggregate's role writes the state tables and, in `statenet_node`,
   only the rows of relays (restrictive row-level security policies), which it lists while they are linked to it.
 - `PgDirectory`: the statenet's nodes (`register`, `heartbeat`, `remove`, `sweep`, `nodes`), and `PgOwnershipStore`
-  and `PgEpochStorage` for who owns a namespace and its stored state.
+  and `PgEpochStorage` for who owns a namespace and its stored state: its rows, its log, and on its head the revision,
+  serial, applied ids and requests. The pending requests are listed without values in `pending_request` (address, id,
+  owner, subject, at, until), a state table, so a server lists what waits for a person without loading namespaces
+  (`docs/design/statenet-requests.md`).
 - `@punyts/stateui-pg/testing`: `createTestDatabase(sets)` makes a schema of its own in the test database, with the
   migrations applied, and drops it after. The test database is `PUNYTS_TEST_DATABASE_URL`, or the one `npm run
   magnetic:db` starts in Docker (`postgres://magnetic:magnetic@127.0.0.1:5433/magnetic`).

@@ -1,4 +1,4 @@
-import { FencedError } from '@punyts/state-sync/authority';
+import { FencedError, isResave } from '@punyts/state-sync/authority';
 import type { RevisedChange } from '@punyts/state-sync';
 import type { EpochStorage, OwnershipRecord, OwnershipStore, StoredNamespace } from '@punyts/state-sync/authority';
 import type { Database, Queryable } from '../db/Database.js';
@@ -36,6 +36,9 @@ export class PgOwnershipStore implements OwnershipStore {
         return (renewed.rowCount ?? 0) === 1;
     }
 }
+
+/** The owner an address is rooted at: its first segment */
+const ownerOf = (address: string): string => address.split('/')[0] ?? address;
 
 /** One save of a namespace, as `PgEpochStorage`'s `onSave` sees it */
 export interface NamespaceSave {
@@ -101,9 +104,10 @@ export class PgDirectory {
 /**
  * A namespace an owner node holds, in `state_node`, `state_change` and `namespace_head`, refusing saves from an older
  * epoch (docs/design/statenet-relays.md, "Epochs fence old owners"): its state row by row, the authority's log in
- * `state_change`, and its revision, epoch and applied change ids on its head. A save at or below the head's revision
- * under the head's epoch writes nothing. `workspaceOf` names the workspace a namespace's rows belong to, for row-level
- * security
+ * `state_change`, and its revision, serial, epoch, applied change ids and requests on its head. A save that landed
+ * already under the head's epoch (`isResave`: by revision, then serial) writes nothing. The pending requests are listed
+ * without values in `pending_request` (docs/design/statenet-requests.md), under the owner the address starts with.
+ * `workspaceOf` names the workspace a namespace's rows belong to, for row-level security
  */
 export class PgEpochStorage implements EpochStorage {
     private readonly store = new PgStateStore();
@@ -128,6 +132,7 @@ export class PgEpochStorage implements EpochStorage {
                 const current = Number((await tx.query<{ epoch: string | number }>('SELECT epoch FROM namespace_head WHERE address = $1 FOR UPDATE', [address])).rows[0]?.epoch ?? 0);
                 if (epoch !== undefined && epoch < current) throw new FencedError(address, epoch, current);
                 await this.store.remove(tx, address);
+                await tx.query('DELETE FROM pending_request WHERE address = $1', [address]);
             },
             { workspaceIds: [await this.workspaceOf(address)] }
         );
@@ -137,7 +142,12 @@ export class PgEpochStorage implements EpochStorage {
         const workspaceId = await this.workspaceOf(address);
         return this.db.transaction(
             async (tx) => {
-                const head = (await tx.query<{ revision: string | number; applied: StoredNamespace['applied'] }>('SELECT revision, applied FROM namespace_head WHERE address = $1', [address])).rows[0];
+                const head = (
+                    await tx.query<{ revision: string | number; serial: string | number | null; applied: StoredNamespace['applied']; requests: NonNullable<StoredNamespace['requests']> }>(
+                        'SELECT revision, serial, applied, requests FROM namespace_head WHERE address = $1',
+                        [address]
+                    )
+                ).rows[0];
                 if (head === undefined) return undefined;
                 const read = await this.store.read(tx, address);
                 const log = (
@@ -148,7 +158,14 @@ export class PgEpochStorage implements EpochStorage {
                 ).rows
                     .reverse()
                     .map((row) => ({ id: row.id, path: row.path, op: row.op, base: 0, revision: Number(row.revision), ...(row.op === 'delete' ? {} : { value: row.value as RevisedChange['value'] }) }) as RevisedChange);
-                return { state: (read.value ?? {}) as StoredNamespace['state'], revision: Number(head.revision), log, applied: head.applied };
+                return {
+                    state: (read.value ?? {}) as StoredNamespace['state'],
+                    revision: Number(head.revision),
+                    log,
+                    applied: head.applied,
+                    ...(head.serial === null ? {} : { serial: Number(head.serial) }),
+                    ...(head.requests.length === 0 ? {} : { requests: head.requests })
+                };
             },
             { workspaceIds: [workspaceId] }
         );
@@ -159,12 +176,13 @@ export class PgEpochStorage implements EpochStorage {
         await this.db.transaction(
             async (tx) => {
                 await tx.query('INSERT INTO namespace_head (address, workspace_id) VALUES ($1, $2) ON CONFLICT (address) DO NOTHING', [address, workspaceId]);
-                const head = (await tx.query<{ revision: string | number; epoch: string | number }>('SELECT revision, epoch FROM namespace_head WHERE address = $1 FOR UPDATE', [address])).rows[0];
+                const head = (await tx.query<{ revision: string | number; serial: string | number | null; epoch: string | number }>('SELECT revision, serial, epoch FROM namespace_head WHERE address = $1 FOR UPDATE', [address])).rows[0];
                 const current = Number(head?.epoch ?? 0);
                 if (epoch < current) throw new FencedError(address, epoch, current);
                 const from = Number(head?.revision ?? 0);
+                const landed = { revision: from, ...(head?.serial === null || head?.serial === undefined ? {} : { serial: Number(head.serial) }) };
                 // a save sent again (after an aggregate restarted, or over another relay) is what landed: nothing to write
-                if (epoch === current && from > 0 && stored.revision <= from) return;
+                if (epoch === current && (from > 0 || landed.serial !== undefined) && isResave(stored, landed)) return;
                 if (this.onSave !== undefined) {
                     const before: Record<string, JsonObject | undefined> = {};
                     for (const key of this.onSave.read) before[key] = (await this.store.read(tx, address, key)).value;
@@ -184,7 +202,25 @@ export class PgEpochStorage implements EpochStorage {
                         change.value === undefined ? null : JSON.stringify(change.value)
                     ]);
                 }
-                await tx.query('UPDATE namespace_head SET revision = $2, durable_revision = $2, epoch = $3, applied = $4, updated_at = now() WHERE address = $1', [address, stored.revision, epoch, JSON.stringify(stored.applied)]);
+                const requests = stored.requests ?? [];
+                await tx.query('UPDATE namespace_head SET revision = $2, durable_revision = $2, epoch = $3, applied = $4, serial = $5, requests = $6, updated_at = now() WHERE address = $1', [
+                    address,
+                    stored.revision,
+                    epoch,
+                    JSON.stringify(stored.applied),
+                    stored.serial ?? null,
+                    JSON.stringify(requests)
+                ]);
+                // the index of pending requests, without values: what waits, for whom, from whom and until when
+                const pending = requests.filter((request) => request.status === 'pending');
+                await tx.query('DELETE FROM pending_request WHERE address = $1 AND NOT (id = ANY ($2::text[]))', [address, pending.map((request) => request.change.id)]);
+                for (const request of pending) {
+                    await tx.query(
+                        `INSERT INTO pending_request (address, id, workspace_id, owner, subject, at, until) VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000), to_timestamp($7::double precision / 1000))
+                         ON CONFLICT (address, id) DO UPDATE SET until = EXCLUDED.until`,
+                        [address, request.change.id, workspaceId, ownerOf(address), request.by, request.at, request.until]
+                    );
+                }
             },
             { workspaceIds: [workspaceId] }
         );

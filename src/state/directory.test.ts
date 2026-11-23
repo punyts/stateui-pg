@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FencedError, OwnerNode } from '@punyts/state-sync/authority';
 import type { Change } from '@punyts/state-sync';
+import type { StoredNamespace, StoredRequest } from '@punyts/state-sync/authority';
 import { STATEUI_PG_MIGRATIONS } from '../migrations.js';
 import { createTestDatabase } from '../testing/testDatabase.js';
 import type { TestDatabase } from '../testing/testDatabase.js';
@@ -131,6 +132,38 @@ describe('PgEpochStorage', () => {
         expect(kept).toMatchObject({ state: { data: { n: 'three' } }, revision: 3 });
         expect(await storage.load(address)).toMatchObject({ state: { data: { n: 'four' } }, revision: 4 });
         expect(ran).toBe(2);
+    });
+
+    it('should keep the serial and requests on the head, list the pending ones without values, and write a save that takes no revision', async () => {
+        // Arrange: bob asks to change alice's namespace at revision 3
+        const storage = new PgEpochStorage(test.db, () => WORKSPACE);
+        const address = `${WORKSPACE}/apps/r1`;
+        const request = (id: string, status: StoredRequest['status']): StoredRequest => ({ change: { id, path: '$.data.title', op: 'set', value: 'Suggested', base: 3 }, clientId: 'bob-tab', by: 'bob', chain: ['entry-1'], at: 1_000, until: 2_000, status });
+        const at = (serial: number, requests: StoredRequest[]): StoredNamespace => ({ state: { data: { title: 'Mine' } }, revision: 3, log: [], applied: [], serial, requests });
+        const listed = () => test.db.transaction(async (tx) => (await tx.query('SELECT * FROM pending_request WHERE address = $1 ORDER BY id', [address])).rows, { workspaceIds: [WORKSPACE] });
+        await storage.save(address, at(3, []), 1);
+
+        // Act
+        await storage.save(address, at(4, [request('r-a', 'pending'), request('r-b', 'pending')]), 1);
+        const asked = await storage.load(address);
+        const pending = await listed();
+        await storage.save(address, at(5, [request('r-a', 'withdrawn'), request('r-b', 'pending')]), 1);
+        await storage.save(address, at(5, [request('r-a', 'pending'), request('r-b', 'pending')]), 1);
+        const decided = await storage.load(address);
+        const left = await listed();
+        await storage.remove(address);
+
+        // Assert
+        expect(asked).toMatchObject({ revision: 3, serial: 4, requests: [{ change: { id: 'r-a', value: 'Suggested' }, status: 'pending' }, { status: 'pending' }] });
+        expect(pending.map((row) => ({ id: row.id, owner: row.owner, subject: row.subject, until: row.until.getTime() }))).toEqual([
+            { id: 'r-a', owner: WORKSPACE, subject: 'bob', until: 2_000 },
+            { id: 'r-b', owner: WORKSPACE, subject: 'bob', until: 2_000 }
+        ]);
+        expect(Object.keys(pending[0] as object)).not.toContain('value');
+        expect(decided?.serial).toBe(5);
+        expect(decided?.requests?.map((kept) => kept.status)).toEqual(['withdrawn', 'pending']);
+        expect(left.map((row) => row.id)).toEqual(['r-b']);
+        expect(await listed()).toEqual([]);
     });
 });
 
