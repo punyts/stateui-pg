@@ -112,6 +112,26 @@ describe('PgEpochStorage', () => {
         await expect(late).rejects.toBeInstanceOf(FencedError);
         expect((await storage.load(address))?.state).toEqual({ data: { b: 2, a: 1 } });
     });
+
+    it('should write nothing for a save at or below the revision that landed under its epoch, and write the next one', async () => {
+        // Arrange: revision 3 landed under epoch 2; every save runs onSave in its transaction
+        let ran = 0;
+        const storage = new PgEpochStorage(test.db, () => WORKSPACE, 1000, { read: [], run: async () => void ran++ });
+        const address = `${WORKSPACE}/e2/app`;
+        const at = (revision: number, n: string) => ({ state: { data: { n } }, revision, log: [], applied: [] });
+        await storage.save(address, at(3, 'three'), 2);
+
+        // Act
+        await storage.save(address, at(3, 'sent again'), 2);
+        await storage.save(address, at(2, 'older'), 2);
+        const kept = await storage.load(address);
+        await storage.save(address, at(4, 'four'), 2);
+
+        // Assert
+        expect(kept).toMatchObject({ state: { data: { n: 'three' } }, revision: 3 });
+        expect(await storage.load(address)).toMatchObject({ state: { data: { n: 'four' } }, revision: 4 });
+        expect(ran).toBe(2);
+    });
 });
 
 describe('two owner nodes on one database', () => {

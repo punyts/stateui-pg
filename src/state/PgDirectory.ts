@@ -101,8 +101,9 @@ export class PgDirectory {
 /**
  * A namespace an owner node holds, in `state_node`, `state_change` and `namespace_head`, refusing saves from an older
  * epoch (docs/design/statenet-relays.md, "Epochs fence old owners"): its state row by row, the authority's log in
- * `state_change`, and its revision, epoch and applied change ids on its head. `workspaceOf` names the workspace a
- * namespace's rows belong to, for row-level security
+ * `state_change`, and its revision, epoch and applied change ids on its head. A save at or below the head's revision
+ * under the head's epoch writes nothing. `workspaceOf` names the workspace a namespace's rows belong to, for row-level
+ * security
  */
 export class PgEpochStorage implements EpochStorage {
     private readonly store = new PgStateStore();
@@ -162,6 +163,8 @@ export class PgEpochStorage implements EpochStorage {
                 const current = Number(head?.epoch ?? 0);
                 if (epoch < current) throw new FencedError(address, epoch, current);
                 const from = Number(head?.revision ?? 0);
+                // a save sent again (after an aggregate restarted, or over another relay) is what landed: nothing to write
+                if (epoch === current && from > 0 && stored.revision <= from) return;
                 if (this.onSave !== undefined) {
                     const before: Record<string, JsonObject | undefined> = {};
                     for (const key of this.onSave.read) before[key] = (await this.store.read(tx, address, key)).value;
