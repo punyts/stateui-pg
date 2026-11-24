@@ -44,10 +44,10 @@ async function* bytesOf(text: string): AsyncIterable<Uint8Array> {
 }
 
 describe('instances', () => {
-    it("should keep each persona's diff over the definition, in key order, and drop it when it is empty", async () => {
+    it("should keep each person's diff over the definition, in key order, and drop it when it is empty", async () => {
         // Arrange
         const app = await appOf(alice, 'counter');
-        const own = alice.instances('default');
+        const own = alice.instances(ALICE);
         const bobsUse = alice.instances(BOB);
         const definition = { data: { count: 0, label: 'x' } };
 
@@ -67,10 +67,10 @@ describe('instances', () => {
         expect(emptied.value).toEqual({});
     });
 
-    it('should keep persona records per binding and remove them with the instance on reset', async () => {
+    it('should keep person records per binding and remove them with the instance on reset', async () => {
         // Arrange
         const app = await appOf(alice, 'notes');
-        const own = alice.instances('default');
+        const own = alice.instances(ALICE);
         await own.write(app, { route: { screen: 'home' } }, { route: { screen: 'edit' } });
 
         // Act
@@ -87,13 +87,13 @@ describe('instances', () => {
         expect((await own.get(app)).value).toEqual({});
     });
 
-    it("should remove every persona's instance of an app with removeApp, and keep the other apps'", async () => {
+    it("should remove every person's instance of an app with removeApp, and keep the other apps'", async () => {
         // Arrange
         const app = await appOf(alice, 'shared');
         const other = await appOf(alice, 'kept');
         const definition = { route: { screen: 'home' } };
         const changed = { route: { screen: 'edit' } };
-        await alice.instances('default').write(app, definition, changed);
+        await alice.instances(ALICE).write(app, definition, changed);
         await alice.instances(BOB).write(app, definition, changed);
         await alice.instances(BOB).write(other, definition, changed);
 
@@ -101,7 +101,7 @@ describe('instances', () => {
         await alice.removeApp?.(app);
 
         // Assert
-        expect((await alice.instances('default').get(app)).value).toEqual({});
+        expect((await alice.instances(ALICE).get(app)).value).toEqual({});
         expect((await alice.instances(BOB).get(app)).value).toEqual({});
         expect((await alice.instances(BOB).get(other)).value).toEqual(changed);
     });
@@ -274,7 +274,7 @@ describe('Isolation', () => {
     it("should never show one workspace another's parts, instances or files", async () => {
         // Arrange
         const app = await appOf(alice, 'private');
-        await alice.instances('default').write(app, {}, { data: { secret: 1 } });
+        await alice.instances(ALICE).write(app, {}, { data: { secret: 1 } });
         await alice.fileStore.save(app, 'c0000000-0000-4000-8000-000000000001', bytesOf('secret'), 100);
 
         // Act
@@ -282,7 +282,7 @@ describe('Isolation', () => {
             byId: await bob.parts.findById('apps', app),
             byName: await bob.parts.findByName('apps', 'private'),
             list: (await bob.parts.list('apps')).map((part) => part.name),
-            instance: (await bob.instances('default').get(app)).value,
+            instance: (await bob.instances(BOB).get(app)).value,
             exists: await bob.files.appExists(app),
             bytes: await bob.fileStore.open(app, 'c0000000-0000-4000-8000-000000000001')
         };

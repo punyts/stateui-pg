@@ -20,7 +20,7 @@ export type { EmbeddingHit, EmbeddingJob, EmbeddingSearch, EmbeddingSource, Sour
 export { PART_SOURCE, partSearchText, partSource } from './embeddings/partText.js';
 export { CatalogEmbeddings, CLOSE_SCORES, DEFAULT_CLOSE_SCORE } from './embeddings/CatalogEmbeddings.js';
 export type { CatalogEntryText, CatalogRanking } from './embeddings/CatalogEmbeddings.js';
-export { changedRecordFields, embeddedFields, PERSONA_RECORD_SOURCE, personaRecordSource, queueAllRecords, queueNamespaceRecordChanges, queueRecordChanges, RECORD_SOURCE, recordSource } from './embeddings/records.js';
+export { changedRecordFields, embeddedFields, PERSON_RECORD_SOURCE, personRecordSource, queueAllRecords, queueNamespaceRecordChanges, queueRecordChanges, RECORD_SOURCE, recordSource } from './embeddings/records.js';
 export { RecordSimilarity } from './embeddings/RecordSimilarity.js';
 export type { SimilarAnswer, SimilarPlace, SimilarRecord, SimilarRequest } from './embeddings/RecordSimilarity.js';
 export type { PartChange } from './workspace/PgPartRepository.js';

@@ -58,7 +58,7 @@ describe('the roles of the servers and the aggregate', () => {
         const outcomes = [
             await as('punyts_aggregate_test', NODE.replace("'form'", "'route'")),
             await as('punyts_aggregate_test', "DELETE FROM state_node WHERE address = '1/apps/x'"),
-            await as('punyts_aggregate_test', `INSERT INTO embedding_job (workspace_id, source_kind, source_id) VALUES ('${WORKSPACE}', 'persona-record', '1/apps/x/b/k')`),
+            await as('punyts_aggregate_test', `INSERT INTO embedding_job (workspace_id, source_kind, source_id) VALUES ('${WORKSPACE}', 'person-record', '1/apps/x/b/k')`),
             await as('punyts_aggregate_test', 'SELECT * FROM part'),
             await as('punyts_aggregate_test', `INSERT INTO part (workspace_id, kind, id, name, revision, body, created_at, updated_at) VALUES ('${WORKSPACE}', 'apps', 'b0000000-0000-4000-8000-000000000002', 'a2', 1, '{}', now(), now())`),
             await as('punyts_aggregate_test', 'DELETE FROM embedding')

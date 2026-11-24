@@ -26,7 +26,7 @@ export interface StatePlace {
 }
 
 export interface StateWriteOptions {
-    /** What the store keeps about the object row at the write's path, such as a persona binding's model */
+    /** What the store keeps about the object row at the write's path, such as a person binding's model */
     readonly meta?: Json;
     /** Top-level keys a write of the whole namespace leaves as they are */
     readonly keep?: readonly string[];

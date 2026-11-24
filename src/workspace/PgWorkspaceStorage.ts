@@ -18,7 +18,7 @@ export interface PgWorkspaceStorageOptions {
     readonly newId?: () => string;
     /** Queues the embedding of every part that changes, in the transaction of the change */
     readonly embedParts?: boolean;
-    /** Queues the embedding of every record field a model marks `embed: true` when it changes, in datasets and persona bindings */
+    /** Queues the embedding of every record field a model marks `embed: true` when it changes, in datasets and person bindings */
     readonly embedRecords?: boolean;
     /**
      * Where the instances are kept as stored namespaces (docs/design/statenet-network.md, "An instance is a stored
@@ -62,12 +62,12 @@ export function pgInstanceNamespaces(db: Database, workspaceOf: (address: string
 }
 
 /**
- * One persona's instances of a workspace, read and written inside a transaction that is already open (an import, a
+ * One person's instances in a workspace's apps, read and written inside a transaction that is already open (an import, a
  * test's arrangement): each write is part of it, and nothing is queued for embedding
  */
-export function txInstances(tx: Queryable, workspaceId: string, persona: string, owners?: OwnerNames): UiInstanceRepository {
+export function txInstances(tx: Queryable, workspaceId: string, person: string, owners?: OwnerNames): UiInstanceRepository {
     const within = { transaction: ((work: (inner: Queryable) => Promise<unknown>) => work(tx)) as Database['transaction'] };
-    return new NamespaceUiInstanceRepository(new PgEpochStorage(within, () => workspaceId), (appId) => userStateAddress(workspaceId, persona, appId, owners));
+    return new NamespaceUiInstanceRepository(new PgEpochStorage(within, () => workspaceId), (appId) => userStateAddress(person, appId, owners));
 }
 
 /**
@@ -80,7 +80,7 @@ export async function txSeedDataset(tx: Queryable, workspaceId: string, name: st
 }
 
 /**
- * One workspace's storage in Postgres, for `createServices({ storage })`: its parts, the instances of each persona,
+ * One workspace's storage in Postgres, for `createServices({ storage })`: its parts, the instances of each person,
  * uploaded files and their bytes, preview errors, and what goes with an app when it is deleted. Every adapter is made
  * for this workspace and sets it on each transaction, so row-level security shows nothing of any other
  */
@@ -113,12 +113,12 @@ export function pgWorkspaceStorage(db: Database, workspaceId: string, options: P
             await namespaces.save(address, seededDataset(records), options.epochOf?.(address) ?? 0);
         },
         datasets: namespaces,
-        instances: (persona) => new NamespaceUiInstanceRepository(namespaces, (appId) => userStateAddress(workspaceId, persona, appId, options.owners), options.epochOf),
+        instances: (person) => new NamespaceUiInstanceRepository(namespaces, (appId) => userStateAddress(person, appId, options.owners), options.epochOf),
         files: new PgUiFileRepository(workspace, now),
         fileStore: new PgUiFileStore(workspace),
         errorLog: new PgUiErrorLog(workspace),
         appFolders: new PgAppFolderStore(workspace),
-        // Every persona's instance of a deleted app, each namespace whole through the namespace store, at its head's epoch
+        // Every person's instance of a deleted app, each namespace whole through the namespace store, at its head's epoch
         removeApp: async (appId) => {
             if (!isAppId(appId)) return;
             const heads = await db.transaction(

@@ -7,7 +7,7 @@ import type { TestDatabase } from '../testing/testDatabase.js';
 import { pgWorkspaceStorage } from '../workspace/PgWorkspaceStorage.js';
 import { hashEmbedder } from './Embedder.js';
 import { EmbeddingIndex } from './EmbeddingIndex.js';
-import { changedRecordFields, embeddedFields, PERSONA_RECORD_SOURCE, personaRecordSource, queueAllRecords, RECORD_SOURCE, recordSource } from './records.js';
+import { changedRecordFields, embeddedFields, PERSON_RECORD_SOURCE, personRecordSource, queueAllRecords, RECORD_SOURCE, recordSource } from './records.js';
 import { RecordSimilarity } from './RecordSimilarity.js';
 
 const WORKSPACE = 'c0000000-0000-4000-8000-000000000003';
@@ -21,7 +21,7 @@ const TICKET_RECORDS = {
     t2: { title: 'Password reset email never arrives', notes: 'login account email', status: 'open' },
     t3: { title: 'Laptop battery drains overnight', notes: 'power battery charge', status: 'closed' }
 };
-const APP_BODY = { uses: { data: { tickets: { dataset: 'tickets' }, mine: { model: 'ticket', scope: 'persona' } } }, start: 'home', screens: { home: { root: { component: 'panel' } } } } as unknown as UiPartBodies['apps'];
+const APP_BODY = { uses: { data: { tickets: { dataset: 'tickets' }, mine: { model: 'ticket', scope: 'person' } } }, start: 'home', screens: { home: { root: { component: 'panel' } } } } as unknown as UiPartBodies['apps'];
 
 let test: TestDatabase;
 let storage: ServicesStorage;
@@ -30,12 +30,12 @@ let similarity: RecordSimilarity;
 
 const jobs = async (): Promise<Array<{ source_kind: string; source_id: string; field: string }>> =>
     (await test.db.query<{ source_kind: string; source_id: string; field: string }>('SELECT source_kind, source_id, field FROM embedding_job ORDER BY source_id, field')).rows;
-const place = (persona: string) => ({ workspaceId: WORKSPACE, parts: storage.parts, appId: APP, persona });
+const place = (person: string) => ({ workspaceId: WORKSPACE, parts: storage.parts, appId: APP, person });
 
 beforeAll(async () => {
     test = await createTestDatabase([STATEUI_PG_MIGRATIONS]);
     storage = pgWorkspaceStorage(test.db, WORKSPACE, { embedRecords: true });
-    index = new EmbeddingIndex(test.db, hashEmbedder(256), { [RECORD_SOURCE]: recordSource, [PERSONA_RECORD_SOURCE]: personaRecordSource });
+    index = new EmbeddingIndex(test.db, hashEmbedder(256), { [RECORD_SOURCE]: recordSource, [PERSON_RECORD_SOURCE]: personRecordSource });
     similarity = new RecordSimilarity(index);
     await storage.parts.create({ kind: 'models', name: 'ticket', body: TICKET_MODEL });
     await storage.parts.create({ kind: 'data', name: 'tickets', body: { model: 'ticket' } as unknown as UiPartBodies['data'] });
@@ -94,7 +94,7 @@ describe('Record embeddings and similar', () => {
         await index.drain();
     });
 
-    it("should search a persona binding's records of that persona only", async () => {
+    it("should search a person binding's records of that person only", async () => {
         // Arrange
         await storage.instances('alice').writeData(APP, 'mine', { model: 'ticket', records: { a1: { title: 'Monitor flickers', notes: '', status: 'open' } } } as never);
         await storage.instances('bob').writeData(APP, 'mine', { model: 'ticket', records: { b1: { title: 'Monitor flickers badly', notes: '', status: 'open' } } } as never);
@@ -145,10 +145,10 @@ describe('Record embeddings and similar', () => {
         // Act
         await queueAllRecords(test.db);
 
-        // Assert: three dataset records and two persona records, two embedded fields each
+        // Assert: three dataset records and two person records, two embedded fields each
         const queued = await jobs();
         expect(queued.filter((job) => job.source_kind === RECORD_SOURCE)).toHaveLength(6);
-        expect(queued.filter((job) => job.source_kind === PERSONA_RECORD_SOURCE)).toHaveLength(4);
+        expect(queued.filter((job) => job.source_kind === PERSON_RECORD_SOURCE)).toHaveLength(4);
         await index.drain();
     });
 });

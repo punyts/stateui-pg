@@ -93,7 +93,7 @@ describe('PgStateStore', () => {
 });
 
 describe('instances as stored namespaces on state_node', () => {
-    it("should keep a persona's diff, its own unbound data and its persona records apart, each at the persona's address", async () => {
+    it("should keep a person's diff, their own unbound data and their person records apart, each at the person's address", async () => {
         // Arrange
         const repository = pgWorkspaceStorage(test.db, WORKSPACE).instances('u1');
         const app = '10000000-0000-4000-8000-000000000007';

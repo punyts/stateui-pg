@@ -2,7 +2,7 @@ import { datasetStateAddress, userStateAddress } from '@punyts/stateui-mcp';
 import type { OwnerNames } from '@punyts/stateui-mcp';
 import type { UiPartRepository } from '@punyts/stateui-mcp';
 import type { EmbeddingIndex } from './EmbeddingIndex.js';
-import { embeddedFields, PERSONA_RECORD_SOURCE, RECORD_SOURCE } from './records.js';
+import { embeddedFields, PERSON_RECORD_SOURCE, RECORD_SOURCE } from './records.js';
 
 /** What `similar` asks: the records of an app's binding whose field means most nearly the text */
 export interface SimilarRequest {
@@ -21,12 +21,12 @@ export interface SimilarRecord {
 
 export type SimilarAnswer = { readonly kind: 'found'; readonly results: readonly SimilarRecord[] } | { readonly kind: 'refused'; readonly reason: string };
 
-/** Where `similar` runs: an app of a workspace, for one persona (whose own records a persona binding searches) */
+/** Where `similar` runs: an app of a workspace, for one person, an owner id (whose own records a person binding searches) */
 export interface SimilarPlace {
     readonly workspaceId: string;
     readonly parts: Pick<UiPartRepository, 'findById' | 'findByName'>;
     readonly appId: string;
-    readonly persona: string;
+    readonly person: string;
 }
 
 const MAX_LIMIT = 50;
@@ -35,7 +35,7 @@ const isObject = (value: unknown): value is Record<string, unknown> => typeof va
 /**
  * The `similar` data operation (docs/design/magnetic-postgres.md, "Four kinds of semantic search"): the keys of the
  * records of an app's binding whose `embed: true` field is closest in meaning to a text, best first. A dataset binding
- * searches the dataset's records; a persona binding only the persona's own. The answer is keys with scores, so the
+ * searches the dataset's records; a person binding only the person's own. The answer is keys with scores, so the
  * app reads the records as usual. A record written moments ago is found once the worker has embedded it
  */
 export class RecordSimilarity {
@@ -60,13 +60,13 @@ export class RecordSimilarity {
             if (refusal !== undefined) return { kind: 'refused', reason: refusal };
             return this.search(place.workspaceId, RECORD_SOURCE, `${datasetStateAddress(place.workspaceId, binding['dataset'], this.owners)}/`, request, limit);
         }
-        if (binding['scope'] === 'persona' && typeof binding['model'] === 'string') {
+        if (binding['scope'] === 'person' && typeof binding['model'] === 'string') {
             const refusal = await this.refusal(place, binding['model'], request.field);
             if (refusal !== undefined) return { kind: 'refused', reason: refusal };
-            // The persona's own state of the app, where its records are
-            return this.search(place.workspaceId, PERSONA_RECORD_SOURCE, `${userStateAddress(place.workspaceId, place.persona, place.appId, this.owners)}/${request.binding}/`, request, limit);
+            // The person's own state of the app, where their records are
+            return this.search(place.workspaceId, PERSON_RECORD_SOURCE, `${userStateAddress(place.person, place.appId, this.owners)}/${request.binding}/`, request, limit);
         }
-        return { kind: 'refused', reason: `the data binding "${request.binding}" is neither a dataset nor a persona binding` };
+        return { kind: 'refused', reason: `the data binding "${request.binding}" is neither a dataset nor a person binding` };
     }
 
     /** Why the field cannot be searched: no such model, or the model does not embed it */

@@ -4,8 +4,8 @@ import type { EmbeddingSource } from './EmbeddingIndex.js';
 
 /** A record field of a dataset: `<owner>/data/<dataset>/<record key>`, its namespace's address and the key, one vector per embedded field, everyone's */
 export const RECORD_SOURCE = 'record';
-/** A record field of a persona binding: `<user state address>/<binding>/<record key>`, one vector per embedded field, the person's own */
-export const PERSONA_RECORD_SOURCE = 'persona-record';
+/** A record field of a person binding: `<user state address>/<binding>/<record key>`, one vector per embedded field, the person's own */
+export const PERSON_RECORD_SOURCE = 'person-record';
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type Records = Readonly<Record<string, Json>>;
@@ -54,7 +54,7 @@ async function modelBody(tx: Queryable, workspaceId: string, name: string | unde
 
 /**
  * Queues the record fields a part change touches, in its transaction: every record of a dataset that moved to another
- * model, and for a model whose embedded fields changed, those fields of every record of its datasets and persona
+ * model, and for a model whose embedded fields changed, those fields of every record of its datasets and person
  * bindings. A record edit is a save of the dataset's namespace, queued by `queueNamespaceRecordChanges`
  */
 export async function queueRecordChanges(tx: Queryable, change: { readonly workspaceId: string; readonly kind: string; readonly id: string; readonly before?: unknown; readonly after?: unknown }): Promise<void> {
@@ -92,7 +92,7 @@ export async function queueRecordChanges(tx: Queryable, change: { readonly works
         )
     ).rows;
     for (const { source } of datasetRecords) for (const field of fields) await queue(RECORD_SOURCE, source, field);
-    // The records of every persona binding of the model, in every person's state
+    // The records of every person binding of the model, in every person's state
     const records = (
         await tx.query<{ address: string; path: string }>(
             `SELECT record.address, record.path FROM state_node binding
@@ -105,14 +105,14 @@ export async function queueRecordChanges(tx: Queryable, change: { readonly works
     for (const row of records) {
         const [, binding, key] = /^data\.([^.]+)\.(.+)$/s.exec(row.path) ?? [];
         if (binding === undefined || key === undefined) continue;
-        for (const field of fields) await queue(PERSONA_RECORD_SOURCE, `${row.address}/${binding}/${key}`, field);
+        for (const field of fields) await queue(PERSON_RECORD_SOURCE, `${row.address}/${binding}/${key}`, field);
     }
 }
 
 /**
  * Queues the record fields that a save of a namespace changes, in its transaction (`PgEpochStorage`'s `onSave`,
  * reading `data` and `models`): for a dataset's namespace, the fields its model embeds of the records that
- * differ; for a person's state, the same for each persona binding, before or after
+ * differ; for a person's state, the same for each person binding, before or after
  */
 export const queueNamespaceRecordChanges = {
     read: ['data', 'models'] as const,
@@ -135,7 +135,7 @@ export const queueNamespaceRecordChanges = {
             for (const model of models) for (const field of embeddedFields(await modelBody(tx, save.workspaceId, model))) fields.add(field);
             // another model: every embedded field of every record either side holds, as for a dataset
             const pairs = models.length > 1 ? [...new Set([...Object.keys(before), ...Object.keys(after)])].flatMap((key) => [...fields].map((field) => [key, field] as const)) : changedRecordFields(before, after, [...fields]);
-            for (const [key, field] of pairs) await enqueueEmbedding(tx, { workspaceId: save.workspaceId, sourceKind: PERSONA_RECORD_SOURCE, sourceId: `${save.address}/${binding}/${key}`, field });
+            for (const [key, field] of pairs) await enqueueEmbedding(tx, { workspaceId: save.workspaceId, sourceKind: PERSON_RECORD_SOURCE, sourceId: `${save.address}/${binding}/${key}`, field });
         }
     }
 };
@@ -158,8 +158,8 @@ export const recordSource: EmbeddingSource = async (tx, job) => {
     return typeof value === 'string' ? { text: value } : undefined;
 };
 
-/** The text of a persona record's field while its model still embeds the field, as the persona's own */
-export const personaRecordSource: EmbeddingSource = async (tx, job) => {
+/** The text of a person record's field while its model still embeds the field, as the person's own */
+export const personRecordSource: EmbeddingSource = async (tx, job) => {
     // `<owner>/apps/<appId>`, the person's state of the app, then the binding and the record's key
     const [owner, branch, appId, binding, key] = segments(job.sourceId, 5) ?? [];
     if (owner === undefined || appId === undefined || branch !== 'apps' || binding === undefined || key === undefined) return undefined;
@@ -172,7 +172,7 @@ export const personaRecordSource: EmbeddingSource = async (tx, job) => {
 };
 
 /**
- * Queues every embedded field of every record, in datasets and persona bindings, of every workspace the connection
+ * Queues every embedded field of every record, in datasets and person bindings, of every workspace the connection
  * sees: for `reindex`, run as the database's owner, which sees past row-level security
  */
 export async function queueAllRecords(db: Queryable): Promise<void> {
@@ -196,6 +196,6 @@ export async function queueAllRecords(db: Queryable): Promise<void> {
            JOIN part model ON model.workspace_id = binding.workspace_id AND model.kind = 'models' AND model.name = models.value->>substr(binding.path, 6)
           CROSS JOIN LATERAL json_each(CASE WHEN json_typeof(model.body->'fields') = 'object' THEN model.body->'fields' ELSE '{}'::json END) field
           WHERE binding.kind = 'object' AND binding.parent = 'data' AND ${embedded}`,
-        [PERSONA_RECORD_SOURCE]
+        [PERSON_RECORD_SOURCE]
     );
 }
