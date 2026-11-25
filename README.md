@@ -21,6 +21,9 @@ Postgres storage for StateUI servers. It holds the pieces every database-backed 
   part keeps the model. `importPart` splits an imported dataset that way, and `txSeedDataset` does it inside a
   transaction an import already holds. With `embedRecords`, a save of a dataset's namespace queues the record fields its
   model embeds (source ids `<owner>/data/<dataset>/<key>`), and a model change queues every record of its datasets.
+  An owner's test run (`<owner>/apps/<appId>.test`, docs/design/stateui-test-runs.md) is stored as a person's state,
+  through `instances(testPersonOf(owner))`; its copies of datasets are never embedded, and `removeApp` removes it with
+  every person's instance of the app.
 - `@punyts/stateui-pg/testing`: `createTestDatabase(sets)` makes a schema of its own in the test database, with the
   migrations applied, and drops it after. The test database is `PUNYTS_TEST_DATABASE_URL`, or the one `npm run
   magnetic:db` starts in Docker (`postgres://magnetic:magnetic@127.0.0.1:5433/magnetic`).

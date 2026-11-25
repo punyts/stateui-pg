@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { datasetStateAddress, installShowcaseInto, MAX_FILES_PER_APP } from '@punyts/stateui-mcp';
+import { datasetStateAddress, installShowcaseInto, MAX_FILES_PER_APP, testPersonOf } from '@punyts/stateui-mcp';
 import type { ServicesStorage } from '@punyts/stateui-mcp';
 import { createDatabase } from '../db/Database.js';
 import type { Database } from '../db/Database.js';
@@ -87,7 +87,7 @@ describe('instances', () => {
         expect((await own.get(app)).value).toEqual({});
     });
 
-    it("should remove every person's instance of an app with removeApp, and keep the other apps'", async () => {
+    it("should remove every person's instance of an app and the owner's test run with removeApp, and keep the other apps'", async () => {
         // Arrange
         const app = await appOf(alice, 'shared');
         const other = await appOf(alice, 'kept');
@@ -96,11 +96,14 @@ describe('instances', () => {
         await alice.instances(ALICE).write(app, definition, changed);
         await alice.instances(BOB).write(app, definition, changed);
         await alice.instances(BOB).write(other, definition, changed);
+        const tester = alice.instances(testPersonOf(ALICE));
+        await tester.write(app, definition, changed);
 
         // Act
         await alice.removeApp?.(app);
 
         // Assert
+        expect((await tester.get(app)).value).toEqual({});
         expect((await alice.instances(ALICE).get(app)).value).toEqual({});
         expect((await alice.instances(BOB).get(app)).value).toEqual({});
         expect((await alice.instances(BOB).get(other)).value).toEqual(changed);

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { datasetStateAddress, seededDataset } from '@punyts/stateui-mcp';
+import { datasetStateAddress, seededDataset, testPersonOf } from '@punyts/stateui-mcp';
 import type { ServicesStorage, UiPartBodies } from '@punyts/stateui-mcp';
 import { STATEUI_PG_MIGRATIONS } from '../migrations.js';
 import { createTestDatabase } from '../testing/testDatabase.js';
@@ -107,6 +107,17 @@ describe('Record embeddings and similar', () => {
         // Assert
         expect(alice.kind === 'found' && alice.results.map((found) => found.key)).toEqual(['a1']);
         expect(bob.kind === 'found' && bob.results.map((found) => found.key)).toEqual(['b1']);
+    });
+
+    it("should queue nothing for a test run's copy of a dataset, on a save or when the model starts to embed a field", async () => {
+        // Arrange
+        await index.drain();
+
+        // Act
+        await storage.instances(testPersonOf(WORKSPACE)).writeData(APP, 'tickets', { model: 'ticket', records: { t1: { title: 'Printer jams in a test run', notes: '', status: 'open' } } } as never);
+
+        // Assert: the next test's requeue of the model leaves it out too
+        expect(await jobs()).toEqual([]);
     });
 
     it('should refuse a field the model does not embed, and a binding the app does not have', async () => {

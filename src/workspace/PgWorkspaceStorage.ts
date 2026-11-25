@@ -118,14 +118,14 @@ export function pgWorkspaceStorage(db: Database, workspaceId: string, options: P
         fileStore: new PgUiFileStore(workspace),
         errorLog: new PgUiErrorLog(workspace),
         appFolders: new PgAppFolderStore(workspace),
-        // Every person's instance of a deleted app, each namespace whole through the namespace store, at its head's epoch
+        // Every person's instance of a deleted app and the owner's test run, each namespace whole through the namespace store, at its head's epoch
         removeApp: async (appId) => {
             if (!isAppId(appId)) return;
             const heads = await db.transaction(
                 async (tx) =>
                     (
                         await tx.query<{ address: string; epoch: string | number }>(
-                            "SELECT address, epoch FROM namespace_head WHERE workspace_id = $1 AND address = split_part(address, '/', 1) || '/apps/' || $2 ORDER BY address",
+                            "SELECT address, epoch FROM namespace_head WHERE workspace_id = $1 AND address IN (split_part(address, '/', 1) || '/apps/' || $2, split_part(address, '/', 1) || '/apps/' || $2 || '.test') ORDER BY address",
                             [workspaceId, appId.toLowerCase()]
                         )
                     ).rows,

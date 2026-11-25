@@ -25,6 +25,11 @@ export function embeddedFields(model: unknown): string[] {
 const recordsIn = (state: Readonly<Record<string, unknown>>): Records => (isObject(state['data']) && isObject(state['data']['records']) ? state['data']['records'] : {});
 /** The address of a dataset's namespace: `<owner>/data/<dataset>` */
 const DATASET_ADDRESS = /^[^/]+\/data\/([^/]+)$/;
+/**
+ * The state of an owner's test run, `<owner>/apps/<appId>.test` (docs/design/stateui-test-runs.md): its copies of
+ * datasets are thrown away by a reset and never embedded
+ */
+const TEST_RUN_ADDRESS = /^[^/]+\/apps\/[^/]+\.test$/;
 /** Where a dataset's records are in its namespace (rows `data.records.<key>`), and where the key starts in a row's path */
 const RECORD_PARENT = 'data.records';
 const RECORD_KEY_AT = RECORD_PARENT.length + 2;
@@ -98,7 +103,7 @@ export async function queueRecordChanges(tx: Queryable, change: { readonly works
             `SELECT record.address, record.path FROM state_node binding
                JOIN state_node record ON record.address = binding.address AND record.parent = binding.path
                JOIN state_node models ON models.address = binding.address AND models.path = 'models' AND models.kind = 'value'
-              WHERE binding.workspace_id = $1 AND binding.kind = 'object' AND binding.parent = 'data' AND models.value->>substr(binding.path, 6) = ANY($2::text[])`,
+              WHERE binding.workspace_id = $1 AND binding.kind = 'object' AND binding.parent = 'data' AND binding.address NOT LIKE '%.test' AND models.value->>substr(binding.path, 6) = ANY($2::text[])`,
             [workspaceId, modelNames]
         )
     ).rows;
@@ -125,6 +130,7 @@ export const queueNamespaceRecordChanges = {
             }
             return;
         }
+        if (TEST_RUN_ADDRESS.test(save.address)) return;
         const was = { data: isObject(save.before['data']) ? save.before['data'] : {}, models: isObject(save.before['models']) ? save.before['models'] : {} };
         const now = { data: isObject(save.after['data']) ? save.after['data'] : {}, models: isObject(save.after['models']) ? save.after['models'] : {} };
         for (const binding of new Set([...Object.keys(was.data), ...Object.keys(now.data)])) {
@@ -195,7 +201,7 @@ export async function queueAllRecords(db: Queryable): Promise<void> {
            JOIN state_node models ON models.address = binding.address AND models.path = 'models' AND models.kind = 'value'
            JOIN part model ON model.workspace_id = binding.workspace_id AND model.kind = 'models' AND model.name = models.value->>substr(binding.path, 6)
           CROSS JOIN LATERAL json_each(CASE WHEN json_typeof(model.body->'fields') = 'object' THEN model.body->'fields' ELSE '{}'::json END) field
-          WHERE binding.kind = 'object' AND binding.parent = 'data' AND ${embedded}`,
+          WHERE binding.kind = 'object' AND binding.parent = 'data' AND binding.address NOT LIKE '%.test' AND ${embedded}`,
         [PERSON_RECORD_SOURCE]
     );
 }

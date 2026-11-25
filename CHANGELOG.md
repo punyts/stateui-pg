@@ -1,6 +1,11 @@
 # Changelog
 
 ## Unreleased
+- **An owner's test run is removed with its app and never embedded** (docs/design/stateui-test-runs.md). `removeApp`
+  removes `<owner>/apps/<appId>.test` beside every person's instance; a save of a test run's state queues no
+  embedding, and neither does a model change or `queueAllRecords`, so its copies of datasets cost nothing. Tests:
+  `src/workspace/workspaceStorage.test.ts` (removeApp), `src/embeddings/records.test.ts` ("should queue nothing for a
+  test run's copy of a dataset").
 - **Person records and instances are the person's** (docs/design/person-state.md). Breaking. `PERSONA_RECORD_SOURCE`
   and `personaRecordSource` are `PERSON_RECORD_SOURCE` (value `person-record`) and `personRecordSource`;
   `SimilarPlace` names `person` (an owner id), and a binding with `scope: "person"` searches that person's records.
